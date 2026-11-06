@@ -1530,6 +1530,213 @@ pseudoShow(scene === 'name');
 })();
 
 </script>
+<script>
+'use strict';
+// =====================================================================
+//  ÉPREUVE 3 — LES TOILETTES
+//  3 portes occupées. Sous les portes : 2 pantalons sur les chevilles,
+//  1 pantalon remonté → c'est là qu'il faut toquer, le plus vite possible.
+//  3 manches de 4 secondes. Score = nombre de bonnes tapes (−3 par erreur).
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const { ln, ell } = Bourdi.chats;
+  const MANCHES = 3, DUREE = 4, MALUS = 3;
+  const DOORS = [10, 128, 246], DW = 104, DT = 212, DB = 500, FLOOR = 650;
+
+  // ---------- Les pieds sous les portes ----------
+  const SHOES = ['baskets', 'talons', 'lapins', 'bottes', 'chaussettes', 'mocassins'];
+  const SKINS = ['#ffd9b8', '#f2c294', '#c98a5a', '#8d5a36'];
+  const PANTS = ['#3a6ad8', '#2f2a3d', '#7a5a3a', '#4aa86a', '#c94a8a', '#8a8aa0'];
+  const pick = a => a[Math.floor(Math.random() * a.length)];
+  function shoe(k, x, y, flip){
+    ctx.save(); ctx.translate(x, y); ctx.scale(flip ? -1 : 1, 1);
+    if (k === 'baskets'){ A.blob(-12, -12, 26, 12, 6, '#fff', 3); ln([[-6, -10], [-6, -4]], 2.5, COL.red); ln([[0, -10], [0, -4]], 2.5, COL.red); ln([[-12, -2], [14, -2]], 3, COL.red); }
+    else if (k === 'talons'){ ctx.beginPath(); ctx.moveTo(-10, -14); ctx.lineTo(14, -4); ctx.lineTo(14, 0); ctx.lineTo(-4, 0); ctx.closePath(); ctx.fillStyle = COL.pink; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.lineJoin = 'round'; ctx.stroke(); ln([[-8, -12], [-8, 0]], 4, COL.ink); }
+    else if (k === 'lapins'){ ell(2, -6, 15, 8, '#fff'); ell(-4, -18, 3.5, 9, '#fff', 2.5, -.3); ell(4, -18, 3.5, 9, '#fff', 2.5, .3); ell(10, -8, 1.8, 1.8, COL.ink, 0); ell(14, -5, 2, 1.5, COL.pink, 0); }
+    else if (k === 'bottes'){ A.blob(-10, -26, 18, 26, 4, '#8a5a2a', 3); A.blob(-10, -10, 26, 10, 5, '#8a5a2a', 3); }
+    else if (k === 'chaussettes'){ A.blob(-10, -14, 26, 14, 7, flip ? COL.green : COL.orange, 3); ln([[-6, -12], [-6, -2]], 3, '#fff'); ln([[2, -12], [2, -2]], 3, '#fff'); }
+    else { A.blob(-12, -10, 26, 10, 5, '#5b3a29', 3); ln([[-4, -8], [6, -8]], 2, '#c98a4b'); }
+    ctx.restore();
+  }
+  function feet(p, i, t, kick){
+    // dessiné en x1,5 pour que l'indice se voie d'un coup d'oeil
+    const K = 1.5, cx = DOORS[i] + DW / 2, by = FLOOR - 6, top = (DB - 4 - by) / K;
+    const tap = p.up ? Math.max(0, Math.sin(t * 9)) * 3 : 0;          // celui qui a fini tapote du pied
+    const stomp = kick > 0 ? Math.sin(kick * 40) * 4 : 0;
+    ctx.save(); ctx.translate(cx, by); ctx.scale(K, K);
+    [-15, 15].forEach((dx, j) => {
+      const x = dx + (j ? stomp : -stomp), lift = j ? tap : 0;
+      if (p.up) A.blob(x - 10, top, 20, -top - 8 - lift, 4, p.pants, 3);          // pantalon remonté
+      else A.blob(x - 6, top, 13, -top - 12, 6, p.skin, 3);                        // jambes nues
+      shoe(p.shoe, x + (j ? 2 : -2), -lift, j === 0);
+    });
+    if (!p.up){
+      // pantalon sur les chevilles, et le slip à coeurs
+      A.blob(-34, -20, 68, 15, 7, p.pants, 3);
+      A.blob(-19, -29, 38, 11, 5, '#fff', 2.5); ctx.fillStyle = COL.red; [-10, 0, 10].forEach(d => { ctx.beginPath(); ctx.arc(d - 1.5, -24.5, 2, 0, Math.PI * 2); ctx.arc(d + 1.5, -24.5, 2, 0, Math.PI * 2); ctx.fill(); });
+    }
+    ctx.restore();
+  }
+  function toilet(cx){
+    A.blob(cx - 18, DT + 150, 36, 46, 6, '#fff', 3);
+    A.blob(cx - 22, DT + 200, 44, 90, 14, '#fff', 3); ell(cx, DT + 200, 30, 12, '#fff'); ell(cx, DT + 200, 22, 7, '#bfeaff', 2);
+    A.blob(cx + 22, DT + 120, 22, 26, 6, '#fff', 3); A.circle(cx + 33, DT + 133, 5, '#ddd', 2);
+  }
+
+  // ---------- État ----------
+  let G;
+  function nouvelleManche(){
+    let good; do good = Math.floor(Math.random() * 3); while (G && good === G.good);
+    const shoes = SHOES.slice().sort(() => Math.random() - .5);
+    G.good = good; G.people = [0, 1, 2].map(i => ({ up: i === good, shoe: shoes[i], skin: pick(SKINS), pants: pick(PANTS) }));
+    G.hits = [0, 0, 0]; G.shake = [0, 0, 0]; G.kick = [0, 0, 0]; G.open = 0; G.mTaps = 0;
+  }
+  function nouvellePartie(){
+    G = { t: 0, count: -1.2, score: 0, manche: 1, phase: 'count', pt: 0, curtain: 0, end: 0, good: -1 };
+    nouvelleManche();
+  }
+
+  // ---------- Sons ----------
+  const snd = {
+    toc(n){ const f = 150 + (n % 4) * 12; A.tone(0, f, .07, .3, 'sine', f * .6); A.bruit(0, .04, .2, 'lowpass', 900, 1); },
+    quelquun(){ A.tone(0, 260, .14, .12, 'sawtooth', 200); A.tone(.13, 200, .25, .12, 'sawtooth', 120); A.bruit(0, .3, .08, 'bandpass', 500, 2); },
+    rideau(){ A.bruit(0, .4, .1, 'bandpass', 900, 1.5, 300); },
+    chasse(){ A.bruit(0, 1.2, .16, 'bandpass', 2200, 1.2, 280); A.tone(.1, 300, 1, .03, 'sine', 120); },
+    grince(){ A.tone(0, 240, .25, .03, 'sawtooth', 380); },
+    count(go){ A.tone(0, go ? 1046 : 523, go ? .3 : .12, .08, 'square'); }
+  };
+
+  // ---------- Logique ----------
+  function update(dt){
+    G.t += dt;
+    for (let i = 0; i < 3; i++){ G.shake[i] = Math.max(0, G.shake[i] - dt * 6); G.kick[i] = Math.max(0, G.kick[i] - dt); }
+    if (G.phase === 'count'){
+      const b = Math.ceil(-G.count / .4); G.count += dt; const a = Math.ceil(-G.count / .4);
+      if (a !== b) snd.count(a === 0);
+      if (G.count >= 0){ G.count = 0; G.phase = 'opening'; snd.rideau(); }
+      return;
+    }
+    if (G.phase === 'opening'){ G.curtain = Math.min(1, G.curtain + dt / .3); if (G.curtain >= 1){ G.phase = 'play'; G.pt = DUREE; } }
+    else if (G.phase === 'play'){
+      G.pt -= dt;
+      if (G.pt <= 0){ G.pt = 0; G.phase = 'libre'; G.lt = 0; A.texte('C\'est libre !', 180, 172, { size: 30, color: COL.green, dur: 1 }); snd.grince(); snd.chasse(); }
+    }
+    else if (G.phase === 'libre'){
+      G.lt += dt; G.open = Math.min(1, G.lt / .25);
+      if (G.lt > 1.0){
+        if (G.manche >= MANCHES){ G.phase = 'fin'; G.end = G.t; A.texte('Ouf !', 180, 360, { size: 54, color: COL.yellow, dur: 1.3, vy: 0 }); A.sons.bien(); A.particules(180, 360, 40, { speed: 340 }); }
+        else { G.phase = 'closing'; snd.rideau(); }
+      }
+    }
+    else if (G.phase === 'closing'){ G.curtain = Math.max(0, G.curtain - dt / .25); if (G.curtain <= 0){ G.manche++; nouvelleManche(); G.phase = 'opening'; snd.rideau(); } }
+    else if (G.phase === 'fin' && G.t - G.end > 1.1){ G.phase = 'done'; A.fin({ score: Math.max(0, G.score) }); }
+  }
+  function down(p){
+    if (G.phase !== 'play' || p.y < DT - 30 || p.y > FLOOR + 30) return;
+    const i = DOORS.findIndex(x => p.x >= x - 4 && p.x <= x + DW + 4); if (i < 0) return;
+    if (i === G.good){
+      G.score++; G.mTaps++; G.hits[i]++; G.shake[i] = Math.min(1, .4 + G.mTaps / 30); snd.toc(G.mTaps);
+      A.particules(p.x, p.y, 3, { speed: 140, size: 5, shape: 'star', colors: [COL.yellow, COL.white] });
+    } else {
+      G.score -= MALUS; G.kick[i] = .5; G.shake[i] = .6; snd.quelquun(); A.secousse(5, .2);
+      A.texte('Y\'A QUELQU\'UN !', 180, 172, { size: 28, color: COL.red, dur: .8 });
+      A.texte('−' + MALUS, DOORS[i] + DW / 2, DT + 40, { size: 30, color: COL.red, dur: .7 });
+    }
+  }
+
+  // ---------- Dessin ----------
+  function drawCurtain(k){
+    // k = 0 fermé, 1 ouvert ; deux pans de velours rouge qui glissent sur les côtés
+    const w = 190 * (1 - k) + 26;
+    [[-10, 1], [370, -1]].forEach(([x0, s]) => {
+      const x = s > 0 ? x0 : x0 - w;
+      ctx.fillStyle = '#d42a3a'; ctx.fillRect(x, -300, w, 1100);
+      for (let i = 0; i < w; i += 22){ ctx.fillStyle = 'rgba(0,0,0,.18)'; ctx.fillRect(x + i, -300, 8, 1100); }
+      ctx.lineWidth = 5; ctx.strokeStyle = COL.ink; ctx.strokeRect(x, -300, w, 1100);
+    });
+    ctx.fillStyle = '#d42a3a'; ctx.fillRect(-20, 120, 400, 34); for (let x = -20; x < 380; x += 40){ A.circle(x + 20, 154, 20, '#d42a3a', 4); }
+    ln([[-20, 152], [380, 152]], 4, COL.yellow);
+  }
+  function draw(){
+    ctx = A.ctx();
+    // carrelage
+    ctx.fillStyle = '#e9f6ff'; ctx.fillRect(-200, -300, 760, 1100);
+    for (let y = 150; y < FLOOR; y += 30) for (let x = -200; x < 560; x += 30){ ctx.strokeStyle = '#c4e2f5'; ctx.lineWidth = 2; ctx.strokeRect(x, y, 30, 30); }
+    ctx.fillStyle = '#7fd4c9'; ctx.fillRect(-200, FLOOR, 760, 400);
+    for (let x = -200; x < 560; x += 40) for (let y = FLOOR; y < 760; y += 40) if (((x + y) / 40) % 2 === 0){ ctx.fillStyle = '#5cbfb3'; ctx.fillRect(x, y, 40, 40); }
+    ln([[-200, FLOOR], [560, FLOOR]], 5, COL.ink);
+    // cloisons et portes
+    A.blob(2, DT - 24, 356, 20, 4, '#9aa6c4', 4);
+    DOORS.forEach((x, i) => {
+      const good = i === G.good, sh = G.shake[i] * Math.sin(G.t * 70) * 4;
+      // intérieur (visible quand la porte s'ouvre)
+      ctx.fillStyle = '#bcd7ff'; ctx.fillRect(x, DT, DW, DB - DT);
+      if (good && G.open > 0) toilet(x + DW / 2);
+      // pieds dessous (sauf porte libérée)
+      if (!(good && G.open > 0)) feet(G.people[i], i, G.t, G.kick[i]);
+      // battant
+      const w = good ? DW * (1 - G.open * .85) : DW;
+      ctx.save(); ctx.translate(sh, 0);
+      A.blob(x, DT, w, DB - DT, 6, ['#ffb84a', '#ff8fb8', '#8fd0ff'][i], 4);
+      if (w > 60){
+        A.blob(x + w / 2 - 22, DT + 24, 44, 26, 6, '#fff', 3); A.txt('WC', x + w / 2, DT + 38, 18, COL.ink, { lw: 0 });
+        A.blob(x + w - 30, DT + 130, 18, 10, 4, G.phase === 'libre' && good ? COL.green : COL.red, 3);
+        A.circle(x + w - 16, DT + 160, 6, COL.yellow, 3);
+      }
+      ctx.restore();
+      // montants
+      A.blob(x - 6, DT - 8, 8, FLOOR - DT + 8, 3, '#9aa6c4', 3); if (i === 2) A.blob(x + DW - 2, DT - 8, 8, FLOOR - DT + 8, 3, '#9aa6c4', 3);
+    });
+    // rideau
+    if (G.curtain < 1) drawCurtain(G.curtain);
+    // HUD
+    A.bigNum(String(Math.max(-999, G.score)), 168, 46, 50, { align: 'right' });
+    A.txt('tocs', 178, 58, 22, COL.white, { lw: 6, align: 'left' });
+    A.txt('Manche ' + G.manche + '/' + MANCHES, 150, 96, 20, COL.white, { lw: 6 });
+    if (G.phase === 'play' || G.phase === 'libre'){
+      const k = G.pt / DUREE;
+      A.blob(30, 120, 300, 20, 10, '#fff', 4);
+      if (k > 0){ A.rr(34, 124, 292 * k, 12, 6); ctx.fillStyle = k < .3 ? COL.red : COL.green; ctx.fill(); }
+    }
+    if (G.phase === 'count'){ const n = Math.ceil(-G.count / .4), f = (-G.count % .4) / .4;
+      ctx.save(); ctx.translate(180, 400); const s = .7 + f * .6; ctx.scale(s, s); A.bigNum(String(n), 0, 0, 120); ctx.restore(); }
+  }
+
+  // ---------- Vignette ----------
+  function vignette(c, x, y, w, h, t){
+    ctx = c; const k = h / 230;
+    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-150, -230);
+    c.fillStyle = '#e9f6ff'; c.fillRect(-200, -50, 700, 400);
+    c.fillStyle = '#7fd4c9'; c.fillRect(-200, 214, 700, 100); ln([[-200, 214], [500, 214]], 4, COL.ink);
+    [[20, '#ffb84a', false, 'talons'], [110, '#ff8fb8', true, 'lapins'], [200, '#8fd0ff', false, 'baskets']].forEach(([dx, col, up, s], i) => {
+      const sh = up ? Math.sin(t * 40) * 3 : 0;
+      A.blob(dx + sh, 20, 82, 160, 6, col, 4); A.blob(dx + 19 + sh, 36, 44, 22, 5, '#fff', 3); A.txt('WC', dx + 41 + sh, 48, 15, COL.ink, { lw: 0 });
+      [-14, 14].forEach((ox, j) => { const cx = dx + 41 + ox;
+        if (up) A.blob(cx - 8, 178, 18, 26, 4, '#3a6ad8', 3); else A.blob(cx - 6, 178, 13, 22, 5, '#ffd9b8', 3);
+        shoe(s, cx, 210, j === 0); });
+      if (!up){ A.blob(dx + 6, 192, 70, 14, 7, '#2f2a3d', 3); }
+    });
+    A.txt('TOC TOC', 150 + Math.sin(t * 8) * 3, 0, 30, COL.yellow, { lw: 8 });
+    c.restore();
+  }
+
+  Bourdi.ajouter({
+    id: 'toilettes', titre: 'Les Toilettes', court: 'Les Toilettes',
+    consigne: 'Envie pressante ! Regarde les pieds sous les portes : toque chez celui qui a remonté son pantalon. Tape le plus vite possible sur la bonne porte !',
+    plusPetitGagne: false,
+    seuils: { S: 120, A: 100, B: 80, C: 60, D: 40 },
+    format: n => Math.max(0, Math.round(n)) + ' tocs',
+    musique: 'jeu',
+    vignette,
+    start(){ ctx = A.ctx(); G = null; nouvellePartie(); },
+    update, draw, down,
+    etat: () => G
+  });
+})();
+
+</script>
 <!-- FIN -->
 <script>Bourdi.demarrer();</script>
 
