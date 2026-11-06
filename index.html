@@ -42,11 +42,16 @@ html,body{height:100%;margin:0;overflow:hidden;background:var(--bg);overscroll-b
 const W = 360, H = 720;
 const cvs = document.getElementById('c'), ctx = cvs.getContext('2d');
 let scale = 1, offX = 0, offY = 0, dpr = 1;
+// zones réservées par l'iPhone (barre du haut / Dynamic Island, barre du bas) : on place le jeu entre les deux
+const safeProbe = document.createElement('div');
+safeProbe.style.cssText = 'position:fixed;left:0;top:0;width:0;visibility:hidden;pointer-events:none;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)';
+document.body.appendChild(safeProbe);
 function resize(){
   dpr = Math.min(window.devicePixelRatio || 1, 3);
-  const w = innerWidth, h = innerHeight;
+  const w = innerWidth, h = innerHeight, cs = getComputedStyle(safeProbe);
+  const st = parseFloat(cs.paddingTop) || 0, sb = parseFloat(cs.paddingBottom) || 0, ah = h - st - sb;
   cvs.width = Math.round(w * dpr); cvs.height = Math.round(h * dpr);
-  scale = Math.min(w / W, h / H); offX = (w - W * scale) / 2; offY = (h - H * scale) / 2;
+  scale = Math.min(w / W, ah / H); offX = (w - W * scale) / 2; offY = st + (ah - H * scale) / 2;
 }
 addEventListener('resize', resize); resize();
 
@@ -215,7 +220,20 @@ function star(x, y, r, fill, lw = 0){
 let actx = null, sfxBus = null, musicBus = null, noiseBuf = null;
 const MUSIC_VOL = .22;
 const midiHz = m => 440 * Math.pow(2, (m - 69) / 12);
+// ---------- La petite voix (synthèse vocale du téléphone, ton un peu cartoon) ----------
+let voix = null, voixPrete = false;
+function dire(t){
+  if (!SAVE.sound || !('speechSynthesis' in window)) return;
+  try {
+    if (!voix) voix = speechSynthesis.getVoices().find(v => /^fr/i.test(v.lang)) || null;
+    const u = new SpeechSynthesisUtterance(t.replace(/…/g, '').toLowerCase());
+    u.lang = 'fr-FR'; if (voix) u.voice = voix; u.pitch = 1.6; u.rate = 1.12; u.volume = 1;
+    speechSynthesis.cancel(); speechSynthesis.speak(u);
+  } catch (e) {}
+}
 function audioOn(){
+  // iPhone : la voix doit être « réveillée » une première fois pendant un toucher
+  if (!voixPrete && 'speechSynthesis' in window){ voixPrete = true; try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); } catch (e) {} }
   if (actx){ if (actx.state === 'suspended') actx.resume(); return; }
   try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e){ return; }
   sfxBus = actx.createGain(); sfxBus.gain.value = .9; sfxBus.connect(actx.destination);
@@ -388,6 +406,7 @@ const api = {
   secousse, particules, texte: texteVolant,
   sons: sfx, tone: (d, f, dur, v, type, f2) => { if (canSfx()) tone(actx.currentTime + (d || 0), f, dur, v, type, f2); },
   bruit: (d, dur, v, type, freq, q, freq2) => { if (canSfx()) burst(actx.currentTime + (d || 0), dur, v, type, freq, q, sfxBus, freq2); },
+  dire,
   fin: null
 };
 Bourdi.api = api;
@@ -606,7 +625,7 @@ function drawResult(){
   gaugeV(16, 214, 240, fill, R.lit);
   // grande lettre
   if (t >= T1){
-    if (!resBoom.rank){ resBoom.rank = true; sfx.valide(); sfx.rang(R.rank); secousse(isS ? 16 : 9, isS ? .5 : .3);
+    if (!resBoom.rank){ resBoom.rank = true; sfx.valide(); sfx.rang(R.rank); setTimeout(() => dire(RANK_TXT[R.rank]), R.rank === 'S' ? 700 : 250); secousse(isS ? 16 : 9, isS ? .5 : .3);
       particules(196, 330, isS ? 90 : R.rank === 'A' ? 40 : 14, { speed: isS ? 520 : 320, life: 1.6 }); }
     const v = Math.min(1, (t - T1) / .25), sc = 2.6 - 1.6 * (1 - Math.pow(1 - v, 2)) + (v >= 1 ? Math.sin((t - T1 - .25) * 5) * .03 : 0);
     ctx.save(); ctx.translate(204, 330); ctx.scale(sc * .9, sc * .9); ctx.rotate(-.08);
@@ -1944,7 +1963,7 @@ pseudoShow(scene === 'name');
   function valider(){
     if (G.phase !== 'place') return;
     const d = total() - G.n, M = G.M; let pts = 0, txt, col;
-    if (d === 0){ pts = P.juste + Math.round(P.bonus * Math.max(0, 1 - G.placeT / 6)); txt = 'Parfait !'; col = COL.green; A.sons.bien(); A.particules(180, 400, 30, { speed: 300 }); }
+    if (d === 0){ pts = P.juste + Math.round(P.bonus * Math.max(0, 1 - G.placeT / 6)); txt = 'Parfait !'; col = COL.green; A.sons.bien(); A.dire('Parfait !'); A.particules(180, 400, 30, { speed: 300 }); }
     else { if (Math.abs(d) === 1) pts = P.presque; txt = d < 0 ? 'Il manque ' + M.un + ' !' : M.Un + ' en trop !'; col = COL.red; A.sons.erreur(); A.secousse(6, .25); }
     G.score += pts;
     G.verdict = { txt, col, d, pts }; G.phase = 'verdict'; G.pt = 1.8;
@@ -2315,7 +2334,7 @@ pseudoShow(scene === 'name');
   function juger(){
     const T = G.T, err = Math.abs(G.f - G.cible); let pts, txt, col;
     if (G.f > 1){ pts = 0; txt = 'Ça déborde !'; col = COL.red; snd.deborde(); A.secousse(6, .3); }
-    else if (err <= .02){ pts = P.parfait; txt = 'Pile poil !'; col = COL.green; A.sons.bien(); snd.tchin(); A.particules(CX, BASE - T.h * G.f, 24, { speed: 260 }); }
+    else if (err <= .02){ pts = P.parfait; txt = 'Pile poil !'; col = COL.green; A.sons.bien(); A.dire('Pile poil !'); snd.tchin(); A.particules(CX, BASE - T.h * G.f, 24, { speed: 260 }); }
     else { pts = Math.max(0, Math.round(P.parfait * (1 - err / .15))); txt = pts >= 60 ? 'Presque !' : G.f < G.cible ? 'Pas assez !' : 'Trop !'; col = pts >= 60 ? COL.yellow : COL.orange; if (pts < 60) A.sons.erreur(); else snd.tchin(); }
     G.score += pts; G.verdict = { txt, col, pts }; G.phase = 'verdict'; G.pt = 1.3;
   }
@@ -3027,6 +3046,17 @@ pseudoShow(scene === 'name');
     } else if (Math.sin(t * 5 + x) > .7) A.star(x + 30, y - 34, 7, COL.yellow, 2);
     ctx.restore();
   }
+  function camera(x, y, fl, bad){
+    const s = 1 + fl * .15;
+    ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+    A.blob(-30, -20, 60, 40, 9, bad ? '#b9b4c8' : '#2f2a3d', 3.5);
+    A.blob(-12, -27, 24, 10, 3, bad ? '#b9b4c8' : '#2f2a3d', 3);
+    A.circle(0, 0, 13, '#fff', 3); A.circle(0, 0, 7, bad ? '#d9d9e6' : COL.sky, 2.5); A.circle(-2, -2, 2.5, '#fff', 0);
+    A.circle(20, -12, 3.5, fl > 0 ? COL.yellow : '#ff6a6a', 0);
+    if (bad){ ln([[-26, -24], [26, 24]], 5, COL.red); }
+    ctx.restore();
+    if (fl > .5) A.star(x + 26, y - 26, 10 * fl, COL.yellow, 2);
+  }
   function draw(){
     ctx = A.ctx();
     ctx.fillStyle = '#ffeec2'; ctx.fillRect(-200, -300, 760, 1100);
@@ -3042,6 +3072,8 @@ pseudoShow(scene === 'name');
       if (p.flash > 0){ ctx.fillStyle = `rgba(255,255,255,${p.flash})`; ctx.beginPath(); ctx.arc(x, PY - 14, 60, 0, Math.PI * 2); ctx.fill(); }
       // viseur d'appareil photo autour des plats
       if (G.phase === 'photo'){ const c = 'rgba(29,21,48,.5)'; [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([sx, sy]) => ln([[x + sx * 52, PY - 14 + sy * 34], [x + sx * 52, PY - 14 + sy * 20]], 3, c)); }
+      // appareil photo sous le plat : on comprend qu'il faut photographier
+      if (G.phase === 'photo' || G.phase === 'arrive') camera(x, 640, p.flash, p.bad);
       // fourchettes qui arrivent
       if (gone > 0){ const fy = PY - 200 + gone * 170; ctx.save(); ctx.translate(x + 20, fy); ctx.rotate(.3); A.blob(-4, -60, 8, 60, 3, '#c9c3d9', 3); A.blob(-9, -78, 18, 20, 3, '#c9c3d9', 3); ctx.restore(); }
     });
@@ -3054,7 +3086,7 @@ pseudoShow(scene === 'name');
       ctx.save(); ctx.translate(180, 260); const s = .7 + f * .6; ctx.scale(s, s); A.bigNum(String(n), 0, 0, 120); ctx.restore(); }
   }
   function down(p){
-    if (G.phase !== 'photo' || p.y < 360 || p.y > 660) return;
+    if (G.phase !== 'photo' || p.y < 360 || p.y > 690) return;
     const i = XS.findIndex(x => Math.abs(p.x - x) < 58); if (i < 0) return;
     const d = G.plats[i];
     if (d.bad){ G.score -= MALUS; snd.beurk(); A.secousse(5, .2); A.texte('Beurk ! −3', d.x, PY - 90, { size: 26, color: COL.red, dur: .8 }); }
@@ -3117,7 +3149,7 @@ pseudoShow(scene === 'name');
   function juger(v){
     const err = Math.abs(v.f - v.cible); let pts, txt, col;
     if (v.f > 1){ pts = 0; txt = 'Ça déborde !'; col = COL.red; snd.deborde(); A.secousse(5, .2); }
-    else if (err <= .02){ pts = 100; txt = 'Pile poil !'; col = COL.green; snd.tchin(); A.particules(v.x, BASE - v.h * v.f, 14, { speed: 200 }); }
+    else if (err <= .02){ pts = 100; txt = 'Pile poil !'; col = COL.green; snd.tchin(); A.dire('Pile poil !'); A.particules(v.x, BASE - v.h * v.f, 14, { speed: 200 }); }
     else { pts = Math.max(0, Math.round(100 * (1 - err / .15))); txt = pts >= 60 ? 'Presque !' : 'Pas assez !'; if (v.f > v.cible && pts < 60) txt = 'Presque !'; col = pts >= 60 ? COL.yellow : COL.orange; snd.stop(); }
     v.verdict = { txt, col, pts }; G.score += pts;
   }
@@ -3151,10 +3183,17 @@ pseudoShow(scene === 'name');
     // trait
     const cy = b - h * v.cible;
     ctx.save(); ctx.setLineDash([7, 6]); ln([[x - w / 2 - 12, cy], [x + w / 2 + 12, cy]], 3, COL.pink); ctx.restore();
-    // bouteille qui verse
-    if (!v.stop && G.phase === 'verse'){ ln([[x, 250], [x, b - h * Math.min(1, v.f)]], 6, v.soda.c); }
-    ctx.save(); ctx.translate(x + (x > 200 ? 8 : 26), 228); ctx.rotate(G.phase === 'verse' && !v.stop ? 2.3 : 1.2);
-    A.blob(-14, -50, 28, 60, 10, 'rgba(120,200,120,.85)', 3); A.blob(-7, -66, 14, 18, 4, 'rgba(120,200,120,.85)', 3); A.blob(-8, -72, 16, 8, 3, COL.red, 2); A.blob(-14, -30, 28, 16, 2, v.soda.c, 2);
+    // la bouteille : renversée pile au-dessus du verre quand elle verse, posée à côté quand elle est arrêtée
+    const pouring = !v.stop && G.phase === 'verse';
+    if (pouring) ln([[x, 246], [x, b - h * Math.min(1, v.f)]], 6, v.soda.c);
+    ctx.save();
+    if (pouring){ ctx.translate(x, 246); ctx.rotate(Math.sin(G.t * 3 + x) * .06); }
+    else { ctx.translate(x + w / 2 + 14, b - 60); ctx.scale(.62, .62); ctx.rotate(Math.PI); }
+    // dessinée goulot en bas (0, 0 = bouchon) : c'est la position pour verser ; retournée, elle est debout
+    A.blob(-17, -96, 34, 72, 12, 'rgba(120,200,120,.9)', 3);
+    A.blob(-17, -76, 34, 22, 2, v.soda.c, 2);
+    A.blob(-8, -24, 16, 22, 5, 'rgba(120,200,120,.9)', 3);
+    A.blob(-9, -6, 18, 8, 3, COL.red, 2);
     ctx.restore();
     if (v.f > 1){ A.blob(x - w / 2 - 6, top - 6, w + 12, 12, 6, v.soda.mousse, 2); ell(x, b + 6, w * .8, 6, v.soda.c, 2); }
     if (v.verdict){ A.txt(v.verdict.txt, x, b + 36, 16, v.verdict.col, { lw: 5, max: 112 }); A.txt('+' + v.verdict.pts, x, b + 62, 16, COL.white, { lw: 5 }); }
