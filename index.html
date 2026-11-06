@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <style>
 /* Tout est dessiné dans le canvas ; seul le champ du pseudo est en HTML */
-:root{color-scheme:light;--bg:#1d1530}
+:root{color-scheme:dark;--bg:#1d1530}
 html,body{height:100%;margin:0;overflow:hidden;background:var(--bg);overscroll-behavior:none;touch-action:none;
   -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
 #c{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
@@ -724,22 +724,16 @@ function drawTrans(t){
 pseudoShow(scene === 'name');
 
 </script>
-<!-- ÉPREUVES : une ligne par épreuve (enlever la ligne = retirer l'épreuve) -->
+<!-- PERSONNAGES COMMUNS -->
 <script>
 'use strict';
 // =====================================================================
-//  ÉPREUVE 1 — LA PORTE
-//  Garder le doigt appuyé = porte ouverte, lâcher = porte fermée.
-//  Rentrer les 10 courses sans laisser entrer Brabus, Prince, Winkle
-//  et les chats du quartier. Score = chrono (+5 s par pipi).
+//  PERSONNAGES COMMUNS — les chats de la maison (Brabus, Prince, Winkle…)
+//  Utilisables par toutes les épreuves : Bourdi.chats.drawCat(...)
 // =====================================================================
 (() => {
-  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
-  const A = Bourdi.api; let ctx = A.ctx();  // api du moteur, contexte de dessin
-  const LANE = 598, ITEM_Y = 590;          // pieds des chats, bas des courses
-  const DOOR_TOP = 425, DOOR_BOT = 600, HINGE = 200, WALL_L = 182;
-  const PIPI_S = 5000;
-
+  const A = Bourdi.api, ctx = A.ctx();
+  const COL = { ink: '#1d1530', yellow: '#ffd21f', white: '#fff' };
   // ---------- Les chats ----------
   const LOOKS = {
     brabus: { body: '#f6ecd8', point: '#5b3a29', eye: '#56b8ff', mask: true, name: 'Brabus' },
@@ -827,6 +821,28 @@ pseudoShow(scene === 'name');
     ctx.restore();
     if (o.name && !o.hideName){ A.txt(o.name, x, y + 14, 14, COL.white, { lw: 4, shadow: false }); }
   }
+
+  Bourdi.chats = { LOOKS, drawCat, tail, ln, ell };
+})();
+
+</script>
+<!-- ÉPREUVES : une ligne par épreuve (enlever la ligne = retirer l'épreuve) -->
+<script>
+'use strict';
+// =====================================================================
+//  ÉPREUVE 1 — LA PORTE
+//  Garder le doigt appuyé = porte ouverte, lâcher = porte fermée.
+//  Rentrer les 10 courses sans laisser entrer Brabus, Prince, Winkle
+//  et les chats du quartier. Score = chrono (+5 s par pipi).
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
+  const A = Bourdi.api; let ctx = A.ctx();  // api du moteur, contexte de dessin
+  const LANE = 598, ITEM_Y = 590;          // pieds des chats, bas des courses
+  const DOOR_TOP = 425, DOOR_BOT = 600, HINGE = 200, WALL_L = 182;
+  const PIPI_S = 5000;
+
+  const { LOOKS, drawCat, tail, ln, ell } = Bourdi.chats;
 
   // ---------- Les courses ----------
   const ITEMS = [
@@ -1183,6 +1199,333 @@ pseudoShow(scene === 'name');
     start(){ ctx = A.ctx(); nouvellePartie(); },
     update, draw, down, up,
     etat: () => G                           // pour les tests automatiques
+  });
+})();
+
+</script>
+<script>
+'use strict';
+// =====================================================================
+//  ÉPREUVE 2 — LES INVITÉS
+//  Toucher le bazar pour ranger avant que la porte s'ouvre.
+//  Invité avec un cadeau : on le laisse entrer. Mains vides : on le touche
+//  pour le jeter dehors. Tonton Bidou ne toque pas : BAM !
+//  Score en points.
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const { LOOKS, drawCat, ln, ell } = Bourdi.chats;
+  const DX = 222, DY = 250, DW = 116, DH = 222, FLOOR = DY + DH;     // la porte d'entrée
+  const NB = 10;
+  const P = { range: 10, merci: 100, dehors: 100, bonus: 100, honte: -50, oups: -200, installe: -300 };
+
+  // ---------- Le bazar ----------
+  const MESS = ['chaussette', 'assiette', 'pizza', 'tshirt', 'canard', 'canette', 'banane', 'livre'];
+  const SPOTS = [];
+  [530, 590, 650].forEach((y, j) => [42, 112, 182, 252, 322].forEach(x => SPOTS.push([x + (j % 2 ? 18 : 0) - 8, y])));
+  [[52, 418], [112, 418], [168, 418]].forEach(s => SPOTS.push(s));
+  function drawMess(k, x, y, s = 1, rot = 0){
+    ctx.save(); ctx.translate(x, y); ctx.scale(s, s); ctx.rotate(rot);
+    const box = (bx, by, w, h, c, r = 5) => A.blob(bx, by, w, h, r, c, 3);
+    if (k === 'chaussette'){ ctx.beginPath(); ctx.moveTo(-6, -30); ctx.lineTo(8, -30); ctx.lineTo(8, -8); ctx.quadraticCurveTo(22, -8, 22, 0); ctx.lineTo(-6, 0); ctx.closePath(); ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.lineJoin = 'round'; ctx.stroke(); ln([[-6, -24], [8, -24]], 4, COL.red); ln([[-6, -18], [8, -18]], 4, COL.red); }
+    else if (k === 'assiette'){ ell(0, -6, 22, 8, '#fff'); ell(0, -7, 13, 4, '#f0e6d6', 2); ell(-5, -8, 4, 2, '#c0582a', 0); ell(5, -6, 3, 2, '#7a9a2a', 0); }
+    else if (k === 'pizza'){ box(-22, -10, 44, 10, '#e8b36a', 3); ell(6, -10, 6, 2, COL.red, 0); }
+    else if (k === 'tshirt'){ ctx.beginPath(); ctx.moveTo(-10, -26); ctx.lineTo(-22, -18); ctx.lineTo(-16, -10); ctx.lineTo(-12, -12); ctx.lineTo(-12, 0); ctx.lineTo(12, 0); ctx.lineTo(12, -12); ctx.lineTo(16, -10); ctx.lineTo(22, -18); ctx.lineTo(10, -26); ctx.quadraticCurveTo(0, -20, -10, -26); ctx.closePath(); ctx.fillStyle = COL.sky; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.lineJoin = 'round'; ctx.stroke(); A.star(0, -12, 5, COL.yellow); }
+    else if (k === 'canard'){ ell(-2, -10, 14, 10, COL.yellow); A.circle(9, -22, 8, COL.yellow, 3); ell(18, -21, 5, 2.5, COL.orange, 2); ell(10, -24, 1.6, 1.6, COL.ink, 0); }
+    else if (k === 'canette'){ ctx.rotate(1.3); box(-8, -12, 16, 26, COL.green, 4); ln([[-8, -6], [8, -6]], 2, COL.ink); }
+    else if (k === 'banane'){ ctx.beginPath(); ctx.moveTo(-18, -14); ctx.quadraticCurveTo(0, 6, 18, -14); ctx.quadraticCurveTo(0, -2, -18, -14); ctx.fillStyle = COL.yellow; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke(); ln([[-18, -14], [-22, -18]], 3, '#5b3a29'); }
+    else if (k === 'livre'){ box(-16, -12, 32, 12, COL.violet, 2); ln([[-12, -6], [12, -6]], 2, '#fff'); }
+    ctx.restore();
+  }
+
+  // ---------- Les invités (vus de face) ----------
+  const SKINS = ['#ffd9b8', '#f2c294', '#c98a5a', '#8d5a36', '#ffe0c7'];
+  const HAIRS = ['#3a2a20', '#f0c040', '#b04a20', '#222', '#d9d9e6'];
+  const SHIRTS = [COL.blue, COL.green, COL.violet, COL.orange, COL.sky, '#ff7ab8'];
+  const STYLES = ['court', 'chignon', 'boucles', 'chauve', 'frange'];
+  const GIFTS = ['gateau', 'fleurs', 'cadeau'];
+  function drawGift(k, x, y){
+    ctx.save(); ctx.translate(x, y); ctx.scale(1.45, 1.45);
+    if (k === 'gateau'){ ell(0, 6, 30, 7, '#fff'); A.blob(-22, -22, 44, 26, 8, '#ff9ec7', 3); ln([[-20, -12], [20, -12]], 4, '#fff'); A.circle(0, -28, 6, COL.red, 3); }
+    else if (k === 'fleurs'){ ctx.beginPath(); ctx.moveTo(-14, -6); ctx.lineTo(14, -6); ctx.lineTo(4, 22); ctx.lineTo(-4, 22); ctx.closePath(); ctx.fillStyle = '#fff3c4'; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke();
+      [[-14, -18, COL.red], [0, -26, COL.yellow], [14, -18, COL.pink], [-6, -12, COL.violet], [8, -10, COL.orange]].forEach(([a, b, c]) => { A.circle(a, b, 8, c, 3); A.circle(a, b, 2.5, COL.ink, 0); }); }
+    else { A.blob(-22, -24, 44, 34, 4, COL.red, 3); ctx.fillStyle = COL.yellow; ctx.fillRect(-4, -24, 8, 34); ctx.fillRect(-22, -11, 44, 8); ell(-8, -28, 8, 5, COL.yellow, 2.5); ell(8, -28, 8, 5, COL.yellow, 2.5); }
+    ctx.restore();
+  }
+  function drawPerson(g, x, y, s, t, o = {}){
+    ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+    if (o.rot) ctx.rotate(o.rot);
+    const big = g.kind === 'bidou', skin = big ? '#ffb199' : g.skin, face = big ? '#ff5a4a' : g.skin;
+    const sit = o.sit, bob = o.walk ? Math.abs(Math.sin(t * 10)) * 4 : 0;
+    ctx.translate(0, -bob);
+    // jambes
+    if (!sit){ const sw = o.walk ? Math.sin(t * 10) * 5 : 0;
+      A.blob(-20 + sw, -56, 17, 52, 7, g.pants, 3); A.blob(3 - sw, -56, 17, 52, 7, g.pants, 3);
+      ell(-12 + sw, -3, 13, 6, COL.ink, 0); ell(12 - sw, -3, 13, 6, COL.ink, 0); }
+    else { A.blob(-24, -40, 20, 30, 7, g.pants, 3); A.blob(4, -40, 20, 30, 7, g.pants, 3); }
+    const by = sit ? -40 : -56;
+    // corps
+    if (big){ ell(0, by - 40, 46, 44, skin); ctx.save(); ctx.beginPath(); ctx.ellipse(0, by - 40, 46, 44, 0, 0, Math.PI * 2); ctx.clip(); ctx.fillStyle = g.shirt; ctx.fillRect(-50, by - 90, 100, 66); ctx.restore();
+      ell(0, by - 40, 46, 44, null); ln([[-44, by - 24], [44, by - 24]], 3, COL.ink); ell(0, by - 12, 3, 4, '#c2604d', 0); }
+    else A.blob(-26, by - 72, 52, 76, 16, g.shirt, 3);
+    // bras + mains
+    const hand = (hx, hy) => A.circle(hx, hy, 8, skin, 3);
+    const sh = by - (big ? 70 : 64);
+    if (g.kind === 'gift' && !o.noGift){
+      ln([[-26, sh], [-16, sh + 34]], 13, COL.ink); ln([[-26, sh], [-16, sh + 34]], 8, g.shirt);
+      ln([[26, sh], [16, sh + 34]], 13, COL.ink); ln([[26, sh], [16, sh + 34]], 8, g.shirt);
+      drawGift(g.gift, 0, sh + 34); hand(-24, sh + 40); hand(24, sh + 40);
+    } else if (sit){
+      ln([[-40, sh + 6], [-56, sh + 30]], 13, COL.ink); ln([[-40, sh + 6], [-56, sh + 30]], 8, g.shirt); hand(-56, sh + 32);
+      ln([[40, sh + 6], [56, sh + 30]], 13, COL.ink); ln([[40, sh + 6], [56, sh + 30]], 8, g.shirt); hand(56, sh + 32);
+    } else {
+      // mains vides : il hausse les épaules, paumes ouvertes
+      const w = big ? 46 : 26, up = Math.sin(t * 8) * 3;
+      ln([[-w, sh + 4], [-w - 14, sh - 10 + up], [-w - 16, sh - 30 + up]], 13, COL.ink); ln([[-w, sh + 4], [-w - 14, sh - 10 + up], [-w - 16, sh - 30 + up]], 8, g.shirt);
+      ln([[w, sh + 4], [w + 14, sh - 10 + up], [w + 16, sh - 30 + up]], 13, COL.ink); ln([[w, sh + 4], [w + 14, sh - 10 + up], [w + 16, sh - 30 + up]], 8, g.shirt);
+      ell(-w - 17, sh - 38 + up, 9, 11, skin); ell(w + 17, sh - 38 + up, 9, 11, skin);
+    }
+    // tête
+    const hy = by - (big ? 108 : 98), hr = big ? 32 : 29;
+    if (g.style === 'chignon') A.circle(0, hy - hr - 6, 13, g.hair, 3);
+    if (g.style === 'boucles') for (let i = 0; i < 7; i++){ const a = Math.PI + i * Math.PI / 6; A.circle(Math.cos(a) * hr, hy + Math.sin(a) * hr * .9, 11, g.hair, 3); }
+    A.circle(0, hy, hr, face, 3);
+    if (g.style === 'court' || g.style === 'chignon' || g.style === 'frange'){
+      ctx.beginPath(); ctx.arc(0, hy, hr, Math.PI * 1.05, Math.PI * 1.95); ctx.quadraticCurveTo(0, hy - hr * (g.style === 'frange' ? .2 : .55), -hr * .99, hy - hr * .3); ctx.fillStyle = g.hair; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke(); }
+    A.circle(-hr, hy + 4, 6, face, 3); A.circle(hr, hy + 4, 6, face, 3);
+    // visage
+    const ex = hr * .38, ey = hy - 2, expr = o.expr || 'smile';
+    [-ex, ex].forEach(e => { ell(e, ey, 7, 8.5, '#fff', 2.5); ell(e + (expr === 'shock' ? 0 : 1), ey + 1, expr === 'shock' ? 2 : 3.6, expr === 'shock' ? 2 : 4.4, COL.ink, 0); });
+    if (big){ ell(-hr * .62, hy + 10, 7, 4, '#d83a2a', 0); ell(hr * .62, hy + 10, 7, 4, '#d83a2a', 0);
+      ln([[-ex - 7, ey - 12], [-ex + 6, ey - 9]], 3.5, COL.ink); ln([[ex + 7, ey - 12], [ex - 6, ey - 9]], 3.5, COL.ink);
+      ctx.beginPath(); ctx.moveTo(4, hy - hr * .7); ctx.quadraticCurveTo(10, hy - hr * .45, 4, hy - hr * .35); ctx.quadraticCurveTo(-2, hy - hr * .45, 4, hy - hr * .7); ctx.fillStyle = '#9fe3ff'; ctx.fill(); ctx.lineWidth = 2; ctx.stroke();
+      A.blob(-14, hy + 12, 28, 6, 3, '#7a3a2a', 0); }
+    if (g.style === 'chauve' && !big) A.blob(-14, hy + 11, 28, 6, 3, g.hair, 2);
+    if (expr === 'shock') ell(0, hy + 15, 6, 8, '#7a1f3d', 2.5);
+    else if (expr === 'sad'){ ctx.beginPath(); ctx.arc(0, hy + 21, 8, Math.PI * 1.15, Math.PI * 1.85); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke(); }
+    else if (expr === 'grin'){ A.blob(-10, hy + 12, 20, 9, 4, '#fff', 2.5); }
+    else { ctx.beginPath(); ctx.arc(0, hy + 9, 9, Math.PI * .15, Math.PI * .85); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke(); }
+    ctx.restore();
+  }
+
+  // ---------- État de la partie ----------
+  let G;
+  const pick = a => a[Math.floor(Math.random() * a.length)];
+  function makeGuest(kind){
+    return { kind, gift: pick(GIFTS), skin: pick(SKINS), hair: pick(HAIRS), shirt: kind === 'bidou' ? '#fff' : pick(SHIRTS),
+      pants: kind === 'bidou' ? '#3a4a8a' : pick(['#3a4a8a', '#5b3a29', '#2f2a3d', '#7a7a8a']), style: pick(STYLES), knocks: Math.random() < .5 ? 1 : 2 };
+  }
+  function nouvellePartie(){
+    // 10 invités : 4 avec cadeau, 4 les mains vides, Tonton Bidou 2 fois (jamais en premier)
+    let list;
+    do { list = ['gift', 'gift', 'gift', 'gift', 'empty', 'empty', 'empty', 'empty', 'bidou', 'bidou'].sort(() => Math.random() - .5); }
+    while (list[0] === 'bidou' || list.some((k, i) => k === 'bidou' && list[i + 1] === 'bidou'));
+    G = { t: 0, count: -1.2, score: 0, arrived: 0, idx: 0, phase: 'gap', pt: 3.2, door: 0, doorTarget: 0,
+      guests: list.map(makeGuest), g: null, leaving: [], sofa: [], mess: [], cat: null, end: 0, knockAt: [] };
+    const free = SPOTS.slice().sort(() => Math.random() - .5).slice(0, 11);
+    free.forEach(s => addMess(s, 0));
+  }
+  function addMess(s, drop){ G.mess.push({ k: pick(MESS), x: s[0], y: s[1], rot: (Math.random() - .5) * .8, drop, gone: -1 }); }
+  const freeSpots = () => SPOTS.filter(s => !G.mess.some(m => m.gone < 0 && m.x === s[0] && m.y === s[1]) && !(s[1] < 450 && G.sofa.length));
+  const add = (n, x, y) => { G.score += n; A.texte((n > 0 ? '+' : '−') + Math.abs(n), x, y, { size: n > 0 ? 22 : 26, color: n > 0 ? COL.green : COL.red, dur: .7 }); };
+
+  // ---------- Sons ----------
+  const snd = {
+    toc(){ A.tone(0, 130, .09, .35, 'sine', 90); A.bruit(0, .06, .25, 'lowpass', 700, 1); },
+    bam(){ A.bruit(0, .3, .45, 'lowpass', 420, 1); A.tone(0, 85, .3, .25, 'square', 45); A.tone(0, 60, .4, .3, 'sine', 35); },
+    pop(){ A.tone(0, 480, .08, .08, 'triangle', 1300); A.bruit(0, .05, .06, 'highpass', 4000, 1); },
+    crash(){ A.bruit(0, .12, .15, 'bandpass', 2400, 2); A.tone(0, 900, .12, .04, 'triangle', 600); },
+    jet(){ A.bruit(0, .35, .15, 'bandpass', 500, 2, 2600); A.tone(.05, 260, .35, .1, 'sine', 980); },
+    ouvre(){ A.tone(0, 220, .18, .03, 'sawtooth', 320); },
+    claque(){ A.bruit(0, .14, .2, 'lowpass', 300, 1); A.tone(0, 100, .14, .1, 'square', 60); },
+    installe(){ A.tone(0, 150, .5, .1, 'sawtooth', 90); A.tone(.3, 400, .25, .05, 'square', 250); A.bruit(.3, .3, .12, 'lowpass', 500, 1); },
+    ohh(){ A.tone(0, 330, .5, .07, 'sawtooth', 220); A.tone(0, 392, .5, .04, 'triangle', 262); },
+    miaou(){ A.tone(0, 600, .1, .06, 'sawtooth', 900); A.tone(.1, 900, .22, .06, 'sawtooth', 500); },
+    count(go){ A.tone(0, go ? 1046 : 523, go ? .3 : .12, .08, 'square'); }
+  };
+
+  // ---------- Logique ----------
+  function openDoor(){
+    const g = G.g; G.doorTarget = 1; G.arrived++;
+    g.st = 'door'; g.t = 0; g.t0 = 0; g.x = DX + DW / 2; g.y = FLOOR;
+    if (g.kind === 'bidou'){ A.texte('BAM !', DX + DW / 2, DY - 20, { size: 44, color: COL.red, dur: .9 }); snd.bam(); A.secousse(13, .35); }
+    else snd.ouvre();
+    // du bazar qui traîne quand la porte s'ouvre ?
+    const left = G.mess.filter(m => m.gone < 0);
+    if (left.length){ G.score += P.honte * left.length; A.texte('Quelle honte !', 180, 360, { size: 32, color: COL.pink, dur: 1.1 }); snd.ohh();
+      A.texte('−' + (-P.honte * left.length), 180, 400, { size: 26, color: COL.red, dur: 1 }); g.shocked = true; }
+  }
+  function ejectGuest(){
+    const g = G.g; if (!g || g.st !== 'door') return;
+    g.st = 'fly'; g.t = 0; snd.jet(); A.secousse(5, .2);
+    A.texte('DEHORS !', 180, DY - 26, { size: 34, color: COL.green, dur: .8 });
+    if (g.kind === 'gift'){ add(P.oups, 180, DY + 30); A.texte('Oups !', 180, 330, { size: 34, color: COL.red, dur: .9 }); A.sons.erreur(); }
+    else { const win = g.kind === 'bidou' ? 1.1 : 2.0; add(P.dehors + Math.round(P.bonus * Math.max(0, 1 - g.t0 / win)), DX + DW / 2, DY + 60); }
+    G.leaving.push(g); G.g = null; afterGuest(.45);
+  }
+  function afterGuest(delay){
+    G.phase = 'after'; G.pt = delay;
+  }
+  function update(dt){
+    G.t += dt;
+    if (G.count < 0){ const b = Math.ceil(-G.count / .4); G.count += dt; const a = Math.ceil(-G.count / .4); if (a !== b) snd.count(a === 0); if (G.count >= 0) G.count = 0; return; }
+    // porte
+    const wd = G.door; G.door += (G.doorTarget - G.door) * Math.min(1, dt * 18);
+    if (wd > .3 && G.door <= .3 && G.doorTarget === 0) snd.claque();
+    // déroulement
+    G.pt -= dt;
+    if (G.phase === 'gap' && G.pt <= 0){
+      if (G.idx >= NB){ G.phase = 'end'; G.pt = .6; }
+      else { G.g = G.guests[G.idx++];
+        if (G.g.kind === 'bidou'){ openDoor(); G.phase = 'guest'; }
+        else { G.phase = 'knock'; G.pt = G.g.knocks === 2 ? 1.7 : .95; G.knockAt = G.g.knocks === 2 ? [0, .32] : [0];
+          A.texte(G.g.knocks === 2 ? 'TOC TOC !' : 'TOC !', 266, DY - 24, { size: 32, color: COL.yellow, dur: .9 }); } }
+    }
+    if (G.phase === 'knock'){
+      G.knockAt = G.knockAt.filter(k => { if (k <= (G.g.knocks === 2 ? 1.7 : .95) - G.pt){ snd.toc(); A.secousse(3, .08); G.knockShake = .15; return false; } return true; });
+      if (G.pt <= 0){ openDoor(); G.phase = 'guest'; }
+    }
+    if (G.knockShake > 0) G.knockShake -= dt;
+    const g = G.g;
+    if (G.phase === 'guest' && g && g.st === 'door'){
+      g.t += dt; g.t0 = g.t;
+      if (g.kind === 'gift' && g.t > 1.4){ g.st = 'enter'; add(P.merci, DX + DW / 2, DY + 40); A.texte('Merci !', DX + DW / 2 - 40, DY - 20, { size: 30, color: COL.pink, dur: .9 }); A.sons.bien(); G.leaving.push(g); G.g = null; afterGuest(.5); }
+      else if (g.kind === 'empty' && g.t > 2.0){ g.st = 'enter'; G.leaving.push(g); G.g = null; afterGuest(.5); }
+      else if (g.kind === 'bidou' && g.t > 1.1){ g.st = 'tosofa'; g.t = 0; add(P.installe, 110, 380); A.texte('Il s\'installe !', 180, 330, { size: 32, color: COL.orange, dur: 1.1 }); snd.installe();
+        G.mess.filter(m => m.gone < 0 && m.y < 450).forEach(m => { m.gone = 0; });
+        G.leaving.push(g); G.g = null; afterGuest(.5); }
+    }
+    if (G.phase === 'after' && G.pt <= 0){
+      G.doorTarget = 0;
+      // les chats repassent et refont du bazar
+      if (G.idx < NB){
+        const dir = Math.random() < .5 ? 1 : -1, n = 3 + Math.floor(Math.random() * 2);
+        const spots = freeSpots().sort(() => Math.random() - .5).slice(0, n);
+        G.cat = { L: pick([LOOKS.brabus, LOOKS.prince, LOOKS.winkle]), dir, x: dir > 0 ? -60 : 420, y: 628, spots, t: 0 };
+        snd.miaou();
+      }
+      G.phase = 'gap'; G.pt = .9 + Math.random() * .8;
+    }
+    if (G.phase === 'end' && G.pt <= 0 && !G.end){ G.end = G.t; A.texte('Soirée terminée !', 180, 330, { size: 36, color: COL.yellow, dur: 1.3, vy: 0 }); A.sons.bien(); A.particules(180, 330, 40, { speed: 340 }); }
+    if (G.end && G.t - G.end > 1.2){ G.end = 1e9; A.fin({ score: Math.max(0, G.score) }); }
+    // chat qui traverse
+    if (G.cat){ const c = G.cat; c.t += dt; c.x += c.dir * 380 * dt;
+      c.spots = c.spots.filter(s => { if ((c.dir > 0 && c.x >= s[0]) || (c.dir < 0 && c.x <= s[0])){ addMess(s, .25); snd.crash(); return false; } return true; });
+      if (c.x < -80 || c.x > 440) G.cat = null; }
+    // bazar qui tombe / qui disparaît
+    G.mess.forEach(m => { if (m.drop > 0) m.drop = Math.max(0, m.drop - dt); if (m.gone >= 0) m.gone += dt; });
+    G.mess = G.mess.filter(m => m.gone < .3);
+    // invités qui partent
+    G.leaving.forEach(l => {
+      l.t += dt;
+      if (l.st === 'enter'){ l.x -= 170 * dt; }
+      else if (l.st === 'tosofa'){ const k = Math.min(1, l.t / .6); l.x = DX + DW / 2 + (100 - DX - DW / 2) * k; l.y = FLOOR + 8 * k; if (k >= 1){ l.st = 'sofa'; G.sofa.push(l); } }
+    });
+    G.leaving = G.leaving.filter(l => !(l.st === 'enter' && l.x < -80) && !(l.st === 'fly' && l.t > .7) && l.st !== 'sofa');
+  }
+
+  // ---------- Dessin ----------
+  function drawRoom(){
+    ctx.fillStyle = '#9fe8c9'; ctx.fillRect(-200, -300, 760, FLOOR + 300);
+    for (let x = -200; x < 560; x += 30){ ctx.fillStyle = '#86dbb6'; ctx.fillRect(x, -300, 12, FLOOR + 300); }
+    // fenêtre et rideaux
+    A.blob(36, 190, 120, 110, 6, '#8fd7ff', 5); ln([[96, 190], [96, 300]], 4, COL.ink); ln([[36, 245], [156, 245]], 4, COL.ink);
+    A.blob(22, 180, 26, 136, 10, COL.pink, 4); A.blob(144, 180, 26, 136, 10, COL.pink, 4);
+    // sol
+    ctx.fillStyle = '#e8a96a'; ctx.fillRect(-200, FLOOR, 760, 400);
+    for (let y = FLOOR + 30; y < 760; y += 34) ln([[-200, y], [560, y]], 2, '#c98a4b');
+    ln([[-200, FLOOR], [560, FLOOR]], 5, COL.ink);
+    ell(180, 600, 160, 62, COL.violet, 4); ell(180, 600, 130, 46, null, 0); ctx.setLineDash([8, 8]); ctx.lineWidth = 3; ctx.strokeStyle = '#c9a0ff'; ctx.stroke(); ctx.setLineDash([]);
+  }
+  function drawDoor(){
+    const o = G.door, shake = G.knockShake > 0 ? Math.sin(G.t * 90) * 3 : 0;
+    A.blob(DX - 12, DY - 12, DW + 24, DH + 12, 4, '#fff6e0', 5);
+    // dehors (visible porte ouverte)
+    ctx.save(); ctx.beginPath(); ctx.rect(DX, DY, DW, DH); ctx.clip();
+    ctx.fillStyle = '#5ec8ff'; ctx.fillRect(DX, DY, DW, DH); A.circle(DX + 20, FLOOR - 10, 26, '#5fc23a', 4); A.circle(DX + 76, FLOOR - 14, 30, '#5fc23a', 4);
+    ctx.fillStyle = '#c9c3d9'; ctx.fillRect(DX, FLOOR - 12, DW, 12);
+    if (G.g && G.g.st === 'door') drawPerson(G.g, G.g.x, FLOOR, .95, G.t, { expr: G.g.kind === 'bidou' ? 'grin' : G.g.shocked ? 'shock' : G.g.kind === 'empty' ? 'sad' : 'smile' });
+    G.leaving.filter(l => l.st === 'fly').forEach(l => { const k = Math.min(1, l.t / .7); drawPerson(l, l.x + k * 30, FLOOR - 40 - k * 200, .95 * (1 - k * .8), G.t, { rot: k * 9, expr: 'shock' }); });
+    ctx.restore();
+    // le battant (s'ouvre vers l'intérieur, gonds à gauche)
+    const w = DW * (1 - o * .82);
+    ctx.save(); ctx.translate(shake, 0);
+    ctx.beginPath(); ctx.moveTo(DX, DY); ctx.lineTo(DX + w, DY - o * 10); ctx.lineTo(DX + w, FLOOR + o * 10); ctx.lineTo(DX, FLOOR); ctx.closePath();
+    ctx.fillStyle = COL.blue; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.lineJoin = 'round'; ctx.stroke();
+    if (w > 40){ A.rr(DX + w * .16, DY + 18, w * .68, 70, 4); ctx.lineWidth = 3; ctx.strokeStyle = '#1d4fd0'; ctx.stroke(); A.rr(DX + w * .16, DY + 106, w * .68, 96, 4); ctx.stroke();
+      A.circle(DX + w * .84, DY + 122, 6, COL.yellow, 3); }
+    ctx.restore();
+  }
+  function drawSofa(back){
+    if (back){ A.blob(14, 352, 182, 82, 22, '#ff5a8f', 5); A.blob(30, 366, 70, 54, 14, '#ff7fab', 3); A.blob(110, 366, 70, 54, 14, '#ff7fab', 3); }
+    else { A.blob(8, 424, 194, 46, 16, '#ff4f86', 5); A.blob(0, 392, 30, 80, 14, '#ff5a8f', 4); A.blob(180, 392, 30, 80, 14, '#ff5a8f', 4);
+      ln([[30, 490], [30, 476]], 6, COL.ink); ln([[180, 490], [180, 476]], 6, COL.ink); }
+  }
+  function draw(){
+    ctx = A.ctx();
+    drawRoom();
+    drawDoor();
+    // invités qui entrent (passent derrière le canapé)
+    G.leaving.filter(l => l.st === 'enter').forEach(l => drawPerson(l, l.x, FLOOR, .95, G.t, { walk: true, noGift: false }));
+    drawSofa(true);
+    G.sofa.forEach((b, i) => drawPerson(b, 100 + (i ? 40 : 0) - (G.sofa.length > 1 ? 20 : 0), 466, .85, G.t, { sit: true, expr: 'grin' }));
+    G.leaving.filter(l => l.st === 'tosofa').forEach(l => drawPerson(l, l.x, l.y, .9, G.t, { walk: true, expr: 'grin' }));
+    drawSofa(false);
+    // bazar
+    G.mess.forEach(m => {
+      const s = m.gone >= 0 ? 1 + m.gone * 3 : 1, a = m.gone >= 0 ? 1 - m.gone / .3 : 1, dy = m.drop > 0 ? -m.drop * 240 : 0;
+      ctx.save(); ctx.globalAlpha = a; drawMess(m.k, m.x, m.y + dy, s * 1.15, m.rot + (m.gone >= 0 ? m.gone * 8 : 0)); ctx.restore();
+    });
+    if (G.cat){ const c = G.cat; drawCat(c.L, c.x, c.y, 1, 'run', G.t * 1.5, { dir: c.dir, expr: 'happy' }); }
+    // HUD
+    const sc = String(Math.abs(Math.round(G.score))).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+    A.bigNum((G.score < 0 ? '−' : '') + sc, 196, 46, 50, { align: 'right' });
+    A.txt('pts', 206, 58, 22, COL.white, { lw: 6, align: 'left' });
+    A.txt('Invités : ' + G.arrived + '/' + NB, 150, 96, 20, COL.white, { lw: 6 });
+    // fenêtre d'action : barre de temps au-dessus de l'invité
+    const g = G.g;
+    if (g && g.st === 'door' && g.kind !== 'gift'){ const win = g.kind === 'bidou' ? 1.1 : 2.0, k = Math.max(0, 1 - g.t / win);
+      A.blob(DX, DY - 8, DW, 12, 6, '#fff', 3); if (k > 0){ A.rr(DX + 2, DY - 6, (DW - 4) * k, 8, 4); ctx.fillStyle = k < .35 ? COL.red : COL.orange; ctx.fill(); } }
+    if (G.count < 0){ const n = Math.ceil(-G.count / .4), f = (-G.count % .4) / .4;
+      ctx.save(); ctx.translate(180, 330); const s = .7 + f * .6; ctx.scale(s, s); A.bigNum(String(n), 0, 0, 120); ctx.restore(); }
+  }
+
+  // ---------- Toucher ----------
+  function down(p){
+    if (G.count < 0 || G.end) return;
+    const g = G.g;
+    if (g && g.st === 'door' && p.x > DX - 30 && p.x < DX + DW + 30 && p.y > DY - 40 && p.y < FLOOR + 20){ ejectGuest(); return; }
+    let best = null, bd = 40;
+    G.mess.forEach(m => { if (m.gone >= 0 || m.drop > 0) return; const d = Math.hypot(p.x - m.x, p.y - (m.y - 12)); if (d < bd){ bd = d; best = m; } });
+    if (best){ best.gone = 0; add(P.range, best.x, best.y - 40); snd.pop(); A.particules(best.x, best.y - 12, 8, { speed: 180, size: 6, shape: 'star', colors: [COL.yellow, COL.white, COL.sky] }); }
+  }
+
+  // ---------- Vignette ----------
+  function vignette(c, x, y, w, h, t){
+    ctx = c; const k = h / 230;
+    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-150, -230);
+    c.fillStyle = '#9fe8c9'; c.fillRect(-200, -100, 700, 400); for (let xx = -200; xx < 500; xx += 30){ c.fillStyle = '#86dbb6'; c.fillRect(xx, -100, 12, 400); }
+    c.fillStyle = '#e8a96a'; c.fillRect(-200, 200, 700, 100); ln([[-200, 200], [500, 200]], 4, COL.ink);
+    A.blob(180, 10, 104, 196, 4, '#fff6e0', 5); c.fillStyle = '#5ec8ff'; c.fillRect(192, 22, 80, 178);
+    const demo = { kind: 'bidou', skin: '#ffd9b8', hair: '#222', shirt: '#fff', pants: '#3a4a8a', style: 'court' };
+    c.save(); c.beginPath(); c.rect(192, 22, 80, 178); c.clip(); drawPerson(demo, 232, 200, .8, t, { expr: 'grin' }); c.restore();
+    A.txt('BAM !', 120 + Math.sin(t * 6) * 3, 50, 40, COL.red, { lw: 9 });
+    drawMess('chaussette', 40, 228, 1.3, .2); drawMess('pizza', 100, 226, 1.3, -.1); drawMess('canard', 150, 228, 1.3, 0);
+    c.restore();
+  }
+
+  Bourdi.ajouter({
+    id: 'invites', titre: 'Les Invités', court: 'Les Invités',
+    consigne: 'Des invités arrivent ! Range la maison avant qu\'ils entrent. Laisse entrer ceux qui apportent un cadeau, et touche ceux qui viennent les mains vides pour les mettre dehors !',
+    plusPetitGagne: false,
+    seuils: { S: 1850, A: 1650, B: 1400, C: 1100, D: 700 },
+    format: n => String(Math.max(0, Math.round(n))).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' pts',
+    musique: 'jeu',
+    vignette,
+    start(){ ctx = A.ctx(); nouvellePartie(); },
+    update, draw, down,
+    etat: () => G
   });
 })();
 
