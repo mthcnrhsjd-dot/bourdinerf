@@ -248,6 +248,7 @@ const sfx = {
   fin(){ if (!canSfx()) return; const t = actx.currentTime; tone(t, 2200, .12, .07, 'square'); tone(t + .15, 2200, .3, .07, 'square'); burst(t, .45, .05, 'bandpass', 3000, 4); },
   valide(){ if (!canSfx()) return; const t = actx.currentTime; burst(t, .12, .2, 'lowpass', 900, 1); tone(t, 140, .2, .2, 'sine', 60); },
   record(){ if (!canSfx()) return; const t = actx.currentTime; arp(t, [79, 84, 88, 91, 96], .07, .2, .07); arp(t + .02, [67, 72, 76, 79, 84], .07, .2, .04, 'triangle'); },
+  palier(i){ if (!canSfx()) return; tone(actx.currentTime, midiHz(67 + i * 3), .12, .07, 'square'); tone(actx.currentTime, midiHz(79 + i * 3), .1, .03, 'triangle'); },
   rang(r){
     if (!canSfx()) return; const t = actx.currentTime;
     if (r === 'E'){ [62, 61, 60, 59].forEach((m, i) => { tone(t + i * .28, midiHz(m), i === 3 ? .7 : .26, .09, 'sawtooth', i === 3 ? midiHz(m) * .94 : 0); }); }
@@ -345,6 +346,39 @@ function rankOf(ep, res){
   return r;
 }
 const better = (ep, a, b) => b == null || (ep.plusPetitGagne ? a < b : a > b);
+// position d'un score sur la jauge des rangs : 0…1 = E, 1…2 = D, … 5…6 = S
+function gaugePos(ep, v, rank){
+  const s = ep.seuils, lo = ep.plusPetitGagne, ok = (a, c) => lo ? a <= c : a >= c;
+  const pts = [lo ? s.D * 1.6 : 0, s.D, s.C, s.B, s.A, s.S];
+  let pos = 0;
+  if (ok(v, s.S)) pos = 5 + Math.min(1, Math.abs(v - s.S) / Math.max(1e-9, Math.abs(s.S - s.A)));
+  else for (let i = 4; i >= 0; i--) if (ok(v, pts[i])){ pos = i + Math.max(0, Math.min(1, (v - pts[i]) / (pts[i + 1] - pts[i]))); break; }
+  if (rank){ const r = rankIdx(rank); pos = Math.max(r, Math.min(r + .999, pos)); }
+  return pos;
+}
+// jauge horizontale (présentation) : E D C B A S de gauche à droite, un trait au niveau du record
+function gaugeH(x, y, w, pos){
+  const seg = w / 6, h = 30;
+  blob(x - 5, y - 5, w + 10, h + 10, 14, COL.white, 4);
+  RANKS.forEach((r, i) => { rr(x + i * seg + 2, y, seg - 4, h, 8); ctx.fillStyle = RANK_COL[r]; ctx.globalAlpha = pos != null && i < pos ? 1 : .3; ctx.fill(); ctx.globalAlpha = 1;
+    txt(r, x + i * seg + seg / 2, y + h / 2 + 1, 19, COL.white, { lw: 4, shadow: false }); });
+  if (pos != null){ const mx = x + Math.min(6, pos) * seg;
+    ln2([[mx, y - 10], [mx, y + h + 10]], 5, COL.ink); ln2([[mx, y - 10], [mx, y + h + 10]], 2.5, COL.white);
+    ctx.beginPath(); ctx.moveTo(mx - 9, y - 20); ctx.lineTo(mx + 9, y - 20); ctx.lineTo(mx, y - 8); ctx.closePath(); ctx.fillStyle = COL.yellow; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke(); }
+}
+// jauge verticale (résultats) : se remplit de E (en bas) jusqu'au rang obtenu
+function gaugeV(x, y, h, fill, lit){
+  const seg = h / 6, w = 42;
+  blob(x - 5, y - 5, w + 10, h + 10, 16, COL.white, 4);
+  RANKS.forEach((r, i) => { const yy = y + h - (i + 1) * seg; rr(x, yy + 2, w, seg - 4, 9); ctx.fillStyle = RANK_COL[r]; ctx.globalAlpha = .25; ctx.fill(); ctx.globalAlpha = 1; });
+  const fh = Math.min(6, fill) * seg;
+  if (fh > 0){ ctx.save(); ctx.beginPath(); ctx.rect(x - 2, y + h - fh, w + 4, fh); ctx.clip();
+    RANKS.forEach((r, i) => { const yy = y + h - (i + 1) * seg; rr(x, yy + 2, w, seg - 4, 9); ctx.fillStyle = RANK_COL[r]; ctx.fill(); }); ctx.restore(); }
+  RANKS.forEach((r, i) => { const yy = y + h - (i + 1) * seg, on = i < lit, k = on && popAt['g' + i] != null ? Math.max(0, 1 - (T - popAt['g' + i]) / .3) : 0;
+    ctx.save(); ctx.translate(x + w / 2, yy + seg / 2); ctx.scale(1 + k * .5, 1 + k * .5); txt(r, 0, 1, 22, on ? COL.white : 'rgba(255,255,255,.6)', { lw: on ? 5 : 3, shadow: false }); ctx.restore(); });
+  if (fill > 0){ const my = y + h - fh; ctx.beginPath(); ctx.moveTo(x + w + 6, my); ctx.lineTo(x + w + 18, my - 9); ctx.lineTo(x + w + 18, my + 9); ctx.closePath(); ctx.fillStyle = COL.yellow; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke(); }
+}
+function ln2(pts, w, c){ ctx.beginPath(); pts.forEach(([a, b], i) => i ? ctx.lineTo(a, b) : ctx.moveTo(a, b)); ctx.lineWidth = w; ctx.strokeStyle = c; ctx.lineCap = 'round'; ctx.stroke(); }
 const unlocked = i => i === 0 || SAVE.test || (EPREUVES[i - 1] && rankIdx(recOf(EPREUVES[i - 1].id).rank) >= rankIdx(UNLOCK));
 
 let cur = null, curIdx = 0, paused = false, runId = 0, RES = null;
@@ -372,7 +406,8 @@ function finish(res){
   if (isRec) rec.best = res.score;
   if (rankIdx(rank) > rankIdx(rec.rank)) rec.rank = rank;
   save();
-  RES = { ep, score: res.score, rank, prev, isRec, best: rec.best,
+  const pos = gaugePos(ep, res.score, rank), fillDur = Math.max(.4, pos / 6 * 1.1);
+  RES = { ep, score: res.score, rank, prev, isRec, best: rec.best, pos, fillDur, T1: .7 + fillDur, lit: 0,
     newUnlock: !wasNext && curIdx + 1 < EPREUVES.length && unlocked(curIdx + 1) };
   sfx.fin();
   if (isRec) lbSend();
@@ -521,14 +556,19 @@ function drawIntro(){
   ctx.save(); ctx.translate(180, 92); const s = .5 + k * .5 + Math.sin(k * Math.PI) * .15; ctx.scale(s, s);
   txt(ep.titre, 0, 0, 46, COL.yellow, { max: 320, lw: 11 }); ctx.restore();
   // illustration
-  rr(30, 140, 300, 230, 26); ctx.fillStyle = COL.ink; ctx.fill();
-  ctx.save(); rr(30, 132, 300, 230, 26); ctx.clip(); ep.vignette(ctx, 30, 132, 300, 230, T); ctx.restore();
-  rr(30, 132, 300, 230, 26); ctx.lineWidth = 5; ctx.strokeStyle = COL.ink; ctx.stroke();
+  rr(30, 140, 300, 196, 26); ctx.fillStyle = COL.ink; ctx.fill();
+  ctx.save(); rr(30, 132, 300, 196, 26); ctx.clip(); ep.vignette(ctx, 30, 132, 300, 196, T); ctx.restore();
+  rr(30, 132, 300, 196, 26); ctx.lineWidth = 5; ctx.strokeStyle = COL.ink; ctx.stroke();
   // consigne
-  const ls = wrap(ep.consigne, 280, 20), bh = 36 + ls.length * 27;
-  blob(20, 392, 320, bh, 22, COL.white, 5);
-  ls.forEach((l, i) => txt(l, 180, 414 + i * 27, 20, COL.ink, { lw: 0 }));
-  button('go', 70, Math.max(560, 392 + bh + 30), 220, 86, 'GO !', { color: COL.green, size: 46, pulse: true });
+  const ls = wrap(ep.consigne, 284, 19), bh = 28 + ls.length * 25;
+  blob(20, 346, 320, bh, 22, COL.white, 5);
+  ls.forEach((l, i) => txt(l, 180, 364 + i * 25, 19, COL.ink, { lw: 0 }));
+  // où j'en suis : record + jauge E → S
+  const rec = recOf(ep.id), gy = 346 + bh + 22;
+  txt(rec.tries ? 'Record : ' + ep.format(rec.best) : 'Pas encore jouée', 180, gy, 20, COL.white, { lw: 6 });
+  gaugeH(30, gy + 34, 300, rec.tries ? gaugePos(ep, rec.best, rec.rank) : null);
+  const by = Math.max(gy + 86, 560);
+  button('go', 70, Math.min(by, 640), 220, 76, 'GO !', { color: COL.green, size: 46, pulse: true });
   button('introBack', 14, 22, 56, 50, icoBack, { color: COL.violet });
 }
 
@@ -549,9 +589,9 @@ function drawPlay(){
 // --- Résultats ---
 let resBoom = { rank: false, rec: false };
 function drawResult(){
-  const R = RES, ep = R.ep, t = sceneT, isS = R.rank === 'S';
-  if (isS) sunburst(180, 300, '#ffe14d', '#ffb800', T * .6, 20);
-  else sunburst(180, 300, RANK_COL[R.rank], 'rgba(255,255,255,.25)', T * .15, 16);
+  const R = RES, ep = R.ep, t = sceneT, isS = R.rank === 'S', T1 = R.T1;
+  if (isS && t >= T1) sunburst(180, 300, '#ffe14d', '#ffb800', T * .6, 20);
+  else sunburst(180, 300, t >= T1 ? RANK_COL[R.rank] : COL.violet, 'rgba(255,255,255,.2)', T * .15, 16);
   txt(ep.titre, 180, 40, 24, COL.white, { max: 300 });
   // score qui défile
   const k = Math.min(1, t / .6), shown = R.score * (1 - Math.pow(1 - k, 3));
@@ -559,12 +599,17 @@ function drawResult(){
   txt('Score', 180, 96, 20, COL.violet, { lw: 0 });
   bigNum(ep.format(ep.plusPetitGagne ? shown : Math.round(shown)), 180, 146, 48);
   if (t < .6 && Math.floor(t * 20) !== Math.floor((t - 1 / 60) * 20)) sfx.tick();
+  // la jauge se remplit de E jusqu'au rang obtenu, avec un « ding » à chaque lettre
+  const u = Math.max(0, Math.min(1, (t - .7) / R.fillDur)), fill = R.pos * (1 - Math.pow(1 - u, 2));
+  const lit = Math.min(6, Math.floor(fill + 1e-6) + (fill > 0 ? 1 : 0));
+  while (R.lit < Math.min(lit, rankIdx(R.rank) + 1)){ popAt['g' + R.lit] = T; sfx.palier(R.lit); R.lit++; }
+  gaugeV(16, 214, 240, fill, R.lit);
   // grande lettre
-  if (t >= .75){
+  if (t >= T1){
     if (!resBoom.rank){ resBoom.rank = true; sfx.valide(); sfx.rang(R.rank); secousse(isS ? 16 : 9, isS ? .5 : .3);
-      particules(180, 330, isS ? 90 : R.rank === 'A' ? 40 : 14, { speed: isS ? 520 : 320, life: 1.6 }); }
-    const u = Math.min(1, (t - .75) / .25), s = 2.6 - 1.6 * (1 - Math.pow(1 - u, 2)) + (u >= 1 ? Math.sin((t - 1) * 5) * .03 : 0);
-    ctx.save(); ctx.translate(180, 330); ctx.scale(s, s); ctx.rotate(-.08);
+      particules(196, 330, isS ? 90 : R.rank === 'A' ? 40 : 14, { speed: isS ? 520 : 320, life: 1.6 }); }
+    const v = Math.min(1, (t - T1) / .25), sc = 2.6 - 1.6 * (1 - Math.pow(1 - v, 2)) + (v >= 1 ? Math.sin((t - T1 - .25) * 5) * .03 : 0);
+    ctx.save(); ctx.translate(204, 330); ctx.scale(sc * .9, sc * .9); ctx.rotate(-.08);
     if (isS){
       ctx.save(); ctx.rotate(T * 1.5); for (let i = 0; i < 12; i++){ ctx.rotate(Math.PI / 6); ctx.fillStyle = i % 2 ? 'rgba(255,255,255,.7)' : 'rgba(255,79,163,.6)'; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(-18, -150); ctx.lineTo(18, -150); ctx.fill(); } ctx.restore();
       star(0, 0, 112, COL.white, 6);
@@ -574,26 +619,26 @@ function drawResult(){
     txt(R.rank, 0, 6, 130, lc, { lw: 18, shadow: COL.ink });
     ctx.restore();
     if (isS && Math.random() < .3) particules(Math.random() * 360, -10, 1, { speed: 60, g: 300, life: 2.5, angle: Math.PI / 2, shape: 'star', size: 12 });
-    const v = Math.min(1, (t - .9) / .2);
-    if (v > 0){ ctx.save(); ctx.globalAlpha = v; txt(RANK_TXT[R.rank], 180, 448, 34, COL.white, { lw: 10 }); ctx.restore(); }
+    const al = Math.min(1, (t - T1 - .15) / .2);
+    if (al > 0){ ctx.save(); ctx.globalAlpha = al; txt(RANK_TXT[R.rank], 196, 448, 32, COL.white, { lw: 10, max: 290 }); ctx.restore(); }
   }
   // record
-  if (t >= 1.25){
+  if (t >= T1 + .5){
     if (!resBoom.rec){ resBoom.rec = true; if (R.isRec){ sfx.record(); particules(180, 500, 30, { speed: 300, colors: [COL.yellow, COL.white, COL.pink] }); } }
-    let y = 495;
+    let y = 500;
     if (R.isRec){ const s = 1 + Math.sin(T * 8) * .06; ctx.save(); ctx.translate(180, y); ctx.scale(s, s); txt('NOUVEAU RECORD !', 0, 0, 30, COL.yellow, { stroke: COL.ink, shadow: COL.red, lw: 9 }); ctx.restore(); }
     else txt('Record : ' + ep.format(R.best), 180, y, 24, COL.white, { lw: 7 });
     if (R.isRec && R.prev != null){
       const d = Math.abs(R.score - R.prev);
-      y += 34; txt((ep.plusPetitGagne ? '−' : '+') + ep.format(d) + ' par rapport à ton record', 180, y, 17, COL.white, { lw: 6, max: 330 });
+      y += 32; txt((ep.plusPetitGagne ? '−' : '+') + ep.format(d) + ' par rapport à ton record', 180, y, 17, COL.white, { lw: 6, max: 330 });
     }
-    if (R.newUnlock){ y += 34; txt('Épreuve suivante débloquée !', 180, y, 19, COL.green, { lw: 7, max: 330 }); }
+    if (R.newUnlock){ y += 30; txt('Épreuve suivante débloquée !', 180, y, 19, COL.green, { lw: 7, max: 330 }); }
   }
-  if (t >= 1.4){
+  if (t >= T1 + .65){
     const hasNext = curIdx + 1 < EPREUVES.length && unlocked(curIdx + 1);
-    button('again', 30, 590, hasNext ? 145 : 300, 60, 'Rejouer', { color: COL.green, pulse: !hasNext });
-    if (hasNext) button('next', 185, 590, 145, 60, 'Suivante', { color: COL.orange, pulse: true });
-    button('menu', 110, 660, 140, 46, 'Menu', { color: COL.blue, size: 22 });
+    button('again', 30, 596, hasNext ? 145 : 300, 60, 'Rejouer', { color: COL.green, pulse: !hasNext });
+    if (hasNext) button('next', 185, 596, 145, 60, 'Suivante', { color: COL.orange, pulse: true });
+    button('menu', 110, 664, 140, 46, 'Menu', { color: COL.blue, size: 22 });
   }
 }
 
@@ -643,7 +688,7 @@ cvs.addEventListener('pointerdown', e => {
     if (b && b.id === 'pause'){ pressId = 'pause'; return; }
     cur.down && cur.down(p, e.pointerId); return;
   }
-  if (scene === 'result' && sceneT < 1.4){ sceneT = 1.4; resBoom.rank || (resBoom.rank = true, sfx.rang(RES.rank)); resBoom.rec = true; return; }
+  if (scene === 'result' && sceneT < RES.T1 + .65){ sceneT = RES.T1 + .65; RES.lit = rankIdx(RES.rank) + 1; resBoom.rank || (resBoom.rank = true, sfx.rang(RES.rank)); resBoom.rec = true; return; }
   pressId = b ? b.id : null;
   if (scene === 'menu') drag = { y: p.y, s: menuScroll, moved: false };
   // mode test caché : toucher 5 fois le logo
@@ -2785,6 +2830,372 @@ pseudoShow(scene === 'name');
     start(){ ctx = A.ctx(); nouvellePartie(); },
     update, draw, down,
     etat: () => G
+  });
+})();
+
+</script>
+<script>
+'use strict';
+// =====================================================================
+//  ÉPREUVE 9 — LES GLACES
+//  3 personnes, chacune veut un nombre de boules (dans sa bulle).
+//  On touche chaque bol autant de fois qu'il faut. Une de trop : elle
+//  tombe par terre (+1 s). Tonton Roupillon en veut parfois 9 !
+//  5 manches, score = chrono.
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const { ln, ell } = Bourdi.chats;
+  const { drawPerson, makePerson } = Bourdi.persos;
+  const XS = [66, 180, 294], BOWL_Y = 548, COUNTER = 500;
+  const MANCHES = [[1, 3], [2, 4], [2, 5], [3, 6], [3, 7]];
+  const PARFUMS = ['#ffb3cf', '#7a4a22', '#b8f08a', '#fff3c4', '#ff6a5a', '#c9a0ff'];
+  const PEN = 1000;
+  const pick = a => a[Math.floor(Math.random() * a.length)];
+
+  let G;
+  function roupillon(){ const p = makePerson('empty'); p.shirt = '#7a8a9a'; p.style = 'chauve'; p.skin = '#ffd9b8'; p.roup = true; return p; }
+  function nouvelleManche(){
+    const [a, b] = MANCHES[G.m - 1];
+    const roupAt = (G.m === 3 || G.m === 5) && Math.random() < .6 ? Math.floor(Math.random() * 3) : -1;
+    G.clients = XS.map((x, i) => { const roup = i === roupAt;
+      return { x, p: roup ? roupillon() : makePerson('empty'), veut: roup ? 9 : a + Math.floor(Math.random() * (b - a + 1)), boules: [], ok: false, falls: [] }; });
+    G.phase = 'arrive'; G.pt = .5;
+  }
+  function nouvellePartie(){ G = { t: 0, count: -1.2, ms: 0, pen: 0, m: 1, end: 0 }; nouvelleManche(); }
+
+  const snd = {
+    count(go){ A.tone(0, go ? 1046 : 523, go ? .3 : .12, .08, 'square'); },
+    plop(n){ A.tone(0, 300 + n * 40, .1, .12, 'sine', 160); A.bruit(0, .05, .08, 'lowpass', 900, 1); },
+    tombe(){ A.tone(0, 600, .4, .07, 'sine', 120); A.bruit(.35, .1, .15, 'lowpass', 500, 1); },
+    miam(){ A.tone(0, 660, .12, .06, 'triangle', 990); }
+  };
+
+  function update(dt){
+    G.t += dt;
+    if (G.count < 0){ const b = Math.ceil(-G.count / .4); G.count += dt; const a = Math.ceil(-G.count / .4); if (a !== b) snd.count(a === 0); if (G.count >= 0) G.count = 0; return; }
+    G.pt -= dt;
+    if (G.phase === 'arrive' && G.pt <= 0) G.phase = 'sert';
+    if (G.phase === 'sert' || G.phase === 'arrive') G.ms += dt * 1000;
+    if (G.phase === 'sert' && G.clients.every(c => c.ok)){ G.phase = 'fini'; G.pt = .6; }
+    if (G.phase === 'fini' && G.pt <= 0){
+      if (G.m >= MANCHES.length){ G.phase = 'fin'; G.end = G.t; A.texte('Régalez-vous !', 180, 330, { size: 38, color: COL.yellow, dur: 1.3, vy: 0 }); A.sons.bien(); A.particules(180, 330, 40, { speed: 340 }); }
+      else { G.m++; nouvelleManche(); }
+    }
+    if (G.phase === 'fin' && G.t - G.end > 1.2){ G.phase = 'done'; A.fin({ score: Math.round(G.ms + G.pen) }); }
+    G.clients.forEach(c => c.falls.forEach(f => { f.t += dt; f.y += f.vy * dt; f.vy += 900 * dt; f.x += f.vx * dt; }));
+  }
+  function sers(i){
+    const c = G.clients[i];
+    if (c.boules.length >= c.veut){
+      c.falls.push({ x: c.x, y: BOWL_Y - 40 - c.veut * 4, vx: (Math.random() - .5) * 200, vy: -200, t: 0, col: pick(PARFUMS) });
+      G.pen += PEN; snd.tombe(); A.texte('Trop ! +1 s', c.x, 300, { size: 24, color: COL.red, dur: .8 }); A.secousse(4, .15); return;
+    }
+    c.boules.push(pick(PARFUMS)); snd.plop(c.boules.length);
+    if (c.boules.length === c.veut){ c.ok = true; snd.miam(); A.texte('Miam !', c.x, 330, { size: 26, color: COL.green, dur: .7 }); A.particules(c.x, BOWL_Y - 40, 10, { speed: 160, size: 6 }); }
+  }
+
+  // ---------- Dessin ----------
+  function scoop(x, y, r, col){ A.circle(x, y, r, col, 3); ell(x - r * .35, y - r * .35, r * .25, r * .18, 'rgba(255,255,255,.6)', 0); }
+  function bowlStack(c){
+    // empile les boules en petite pyramide au-dessus du bol
+    const r = 13; let i = 0;
+    for (let row = 0; i < c.boules.length; row++){
+      const n = Math.max(1, 3 - (row % 3 === 2 ? 1 : 0) - Math.floor(row / 2));
+      for (let k = 0; k < n && i < c.boules.length; k++, i++) scoop(c.x + (k - (n - 1) / 2) * r * 1.6, BOWL_Y - 26 - row * r * 1.35, r, c.boules[i]);
+    }
+  }
+  function bubble(c){
+    const n = c.veut, cols = n > 4 ? 3 : n, rows = Math.ceil(n / cols), w = cols * 22 + 18, h = rows * 22 + 16, x = c.x - w / 2, y = 168 - h / 2;
+    A.blob(x, y, w, h, 14, c.ok ? '#d9ffc2' : '#fff', 4);
+    ctx.beginPath(); ctx.moveTo(c.x - 8, y + h - 2); ctx.lineTo(c.x, y + h + 14); ctx.lineTo(c.x + 8, y + h - 2); ctx.closePath(); ctx.fillStyle = c.ok ? '#d9ffc2' : '#fff'; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.stroke();
+    for (let i = 0; i < n; i++){ const cx = x + 20 + (i % cols) * 22, cy = y + 19 + Math.floor(i / cols) * 22; scoop(cx, cy, 8, c.p.roup ? COL.pink : '#ffb3cf'); }
+  }
+  function draw(){
+    ctx = A.ctx();
+    ctx.fillStyle = '#ffd8ec'; ctx.fillRect(-200, -300, 760, 1100);
+    for (let x = -200; x < 560; x += 44){ ctx.fillStyle = '#ffc6e2'; ctx.fillRect(x, -300, 22, 820); }
+    G.clients.forEach(c => { if (G.phase !== 'arrive' || G.pt < .35) bubble(c); drawPerson(c.p, c.x, COUNTER + 40, .78, G.t, { sit: false, expr: c.ok ? 'grin' : 'smile' }); });
+    // comptoir
+    A.blob(-20, COUNTER, 400, 260, 0, '#7ad8d0', 5); A.blob(-20, COUNTER, 400, 20, 0, '#5cbfb3', 4);
+    G.clients.forEach(c => {
+      bowlStack(c);
+      ctx.beginPath(); ctx.moveTo(c.x - 40, BOWL_Y - 22); ctx.lineTo(c.x + 40, BOWL_Y - 22); ctx.quadraticCurveTo(c.x + 36, BOWL_Y + 12, c.x, BOWL_Y + 14); ctx.quadraticCurveTo(c.x - 36, BOWL_Y + 12, c.x - 40, BOWL_Y - 22); ctx.closePath();
+      ctx.fillStyle = c.ok ? COL.green : '#fff'; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.stroke();
+      A.txt(c.boules.length + '/' + c.veut, c.x, BOWL_Y + 40, 18, COL.white, { lw: 5 });
+      c.falls.forEach(f => { if (f.t < 1.2) scoop(f.x, f.y, 12, f.col); });
+    });
+    // HUD
+    A.bigNum(((G.ms + G.pen) / 1000).toFixed(2).replace('.', ','), 196, 46, 50, { align: 'right' });
+    A.txt('s', 206, 58, 22, COL.white, { lw: 6, align: 'left' });
+    A.txt('Manche ' + G.m + '/' + MANCHES.length, 150, 96, 20, COL.white, { lw: 6 });
+    if (G.count < 0){ const n = Math.ceil(-G.count / .4), f = (-G.count % .4) / .4;
+      ctx.save(); ctx.translate(180, 380); const s = .7 + f * .6; ctx.scale(s, s); A.bigNum(String(n), 0, 0, 120); ctx.restore(); }
+  }
+  function down(p){
+    if (G.phase !== 'sert' || p.y < 260) return;
+    const i = XS.findIndex(x => Math.abs(p.x - x) < 58); if (i >= 0) sers(i);
+  }
+  function vignette(c, x, y, w, h, t){
+    ctx = c; const k = h / 230;
+    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-150, -230);
+    c.fillStyle = '#ffd8ec'; c.fillRect(-200, -50, 700, 400);
+    A.blob(-20, 180, 400, 100, 0, '#7ad8d0', 5);
+    const n = 1 + Math.floor(t * 2) % 5;
+    for (let i = 0; i < n; i++) scoop(150 + ((i % 3) - 1) * 26, 160 - Math.floor(i / 3) * 22, 15, PARFUMS[i % 6]);
+    ctx.beginPath(); ctx.moveTo(100, 166); ctx.lineTo(200, 166); ctx.quadraticCurveTo(196, 210, 150, 212); ctx.quadraticCurveTo(104, 210, 100, 166); ctx.closePath(); ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.stroke();
+    A.blob(108, 20, 84, 60, 14, '#fff', 4); for (let i = 0; i < 5; i++) scoop(126 + (i % 3) * 22, 38 + Math.floor(i / 3) * 22, 8, '#ffb3cf');
+    c.restore();
+  }
+  Bourdi.ajouter({
+    id: 'glaces', titre: 'Les Glaces', court: 'Les Glaces',
+    consigne: 'Chacun veut un nombre de boules différent ! Touche chaque bol autant de fois qu\'il faut, le plus vite possible.',
+    plusPetitGagne: true,
+    seuils: { S: 13000, A: 17000, B: 22000, C: 28000, D: 38000 },
+    format: ms => (Math.max(0, ms) / 1000).toFixed(2).replace('.', ',') + ' s',
+    musique: 'jeu', vignette,
+    start(){ ctx = A.ctx(); nouvellePartie(); },
+    update, draw, down, etat: () => G
+  });
+})();
+
+</script>
+<script>
+'use strict';
+// =====================================================================
+//  ÉPREUVE 10 — LA PHOTO DU PLAT
+//  3 plats arrivent : des beaux et des ratés. On tapote le plus vite
+//  possible sur les beaux (1 tape = 1 photo), jamais sur un raté (−3).
+//  Après 3 secondes : « On mange ! ». 5 manches, score = nombre de photos.
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const { ln, ell } = Bourdi.chats;
+  const XS = [66, 180, 294], PY = 520, MANCHES = 5, DUREE = 3, MALUS = 3;
+  const BEAUX = ['pates', 'burger', 'sushis', 'gateau', 'salade'], RATES = ['brule', 'bouillie'];
+  const pick = a => a[Math.floor(Math.random() * a.length)];
+
+  let G;
+  function nouvelleManche(){
+    const nb = Math.random() < .5 ? 1 : 2, bad = [0, 1, 2].sort(() => Math.random() - .5).slice(0, 3 - nb);
+    G.plats = XS.map((x, i) => ({ x, bad: bad.includes(i), k: bad.includes(i) ? pick(RATES) : pick(BEAUX), flash: 0, n: 0 }));
+    G.phase = 'arrive'; G.pt = .45;
+  }
+  function nouvellePartie(){ G = { t: 0, count: -1.2, score: 0, m: 1, end: 0, forks: 0 }; nouvelleManche(); }
+
+  const snd = {
+    count(go){ A.tone(0, go ? 1046 : 523, go ? .3 : .12, .08, 'square'); },
+    clic(){ A.bruit(0, .05, .2, 'highpass', 3500, 1); A.tone(0, 1800, .03, .05, 'square'); },
+    beurk(){ A.tone(0, 200, .3, .1, 'sawtooth', 120); A.bruit(0, .3, .1, 'lowpass', 400, 1); },
+    glisse(){ A.bruit(0, .3, .05, 'bandpass', 1600, 2, 800); },
+    mange(){ for (let i = 0; i < 3; i++) A.tone(i * .12, 400 + i * 80, .08, .06, 'triangle'); }
+  };
+
+  function update(dt){
+    G.t += dt;
+    if (G.count < 0){ const b = Math.ceil(-G.count / .4); G.count += dt; const a = Math.ceil(-G.count / .4); if (a !== b) snd.count(a === 0); if (G.count >= 0){ G.count = 0; snd.glisse(); } return; }
+    G.pt -= dt; G.plats.forEach(p => { p.flash = Math.max(0, p.flash - dt * 6); });
+    if (G.phase === 'arrive' && G.pt <= 0){ G.phase = 'photo'; G.pt = DUREE; }
+    else if (G.phase === 'photo' && G.pt <= 0){ G.phase = 'mange'; G.pt = .9; A.texte('On mange !', 180, 300, { size: 34, color: COL.yellow, dur: .9 }); snd.mange(); }
+    else if (G.phase === 'mange'){ G.forks = 1 - G.pt / .9;
+      if (G.pt <= 0){ G.forks = 0;
+        if (G.m >= MANCHES){ G.phase = 'fin'; G.end = G.t; A.texte('Miam !', 180, 330, { size: 46, color: COL.yellow, dur: 1.3, vy: 0 }); A.sons.bien(); A.particules(180, 330, 40, { speed: 340 }); }
+        else { G.m++; nouvelleManche(); snd.glisse(); } } }
+    else if (G.phase === 'fin' && G.t - G.end > 1.2){ G.phase = 'done'; A.fin({ score: Math.max(0, G.score) }); }
+  }
+
+  // ---------- Les plats ----------
+  function plat(p, x, y, t){
+    ctx.save(); ctx.translate(x, y); ctx.scale(1.1, 1.1); ctx.translate(-x, -y);
+    ell(x, y + 6, 52, 20, '#00000022', 0);
+    ell(x, y, 50, 20, '#fff'); ell(x, y, 36, 13, '#f0ecf8', 2);
+    const k = p.k;
+    if (k === 'pates'){ for (let i = 0; i < 6; i++) ln([[x - 24 + i * 9, y - 6], [x - 18 + i * 8, y - 18 + (i % 2) * 6], [x - 10 + i * 6, y - 4]], 4, '#f5d36a'); A.circle(x - 6, y - 14, 6, COL.red, 2.5); A.circle(x + 10, y - 12, 5, COL.red, 2.5); ell(x + 2, y - 22, 6, 3, '#3fa535', 2); }
+    else if (k === 'burger'){ ell(x, y - 30, 26, 14, '#e8a64a'); A.blob(x - 28, y - 22, 56, 8, 4, '#5b3a1a', 2.5); A.blob(x - 26, y - 16, 52, 6, 3, '#7ad81e', 2); A.blob(x - 26, y - 11, 52, 9, 4, '#e8a64a', 2.5); [-10, 0, 10].forEach(d => ell(x + d, y - 36, 1.5, 1, '#fff', 0)); }
+    else if (k === 'sushis'){ [-22, 0, 22].forEach(d => { A.circle(x + d, y - 8, 10, '#fff', 3); A.circle(x + d, y - 8, 5, COL.orange, 0); ctx.beginPath(); ctx.arc(x + d, y - 8, 10, 0, Math.PI * 2); ctx.lineWidth = 3; ctx.strokeStyle = '#1d3a2a'; ctx.stroke(); }); }
+    else if (k === 'gateau'){ A.blob(x - 24, y - 34, 48, 30, 8, '#ff9ec7', 3); ln([[x - 22, y - 22], [x + 22, y - 22]], 4, '#fff'); A.circle(x, y - 40, 6, COL.red, 3); [-14, 14].forEach(d => A.circle(x + d, y - 36, 3, COL.yellow, 0)); }
+    else if (k === 'salade'){ [[-14, -10, '#7ad81e'], [8, -14, '#5fc23a'], [-2, -6, '#9be04a'], [16, -6, COL.red], [-18, -4, COL.red]].forEach(([a, b, c]) => A.circle(x + a, y + b, 9, c, 2.5)); }
+    else if (k === 'brule'){ ell(x, y - 10, 26, 14, '#2a221e'); [[-8, -16], [6, -12], [-2, -6]].forEach(([a, b]) => A.circle(x + a, y + b, 3, '#ff6a2a', 0));
+      for (let i = 0; i < 3; i++){ const s = (t * .8 + i / 3) % 1; ctx.save(); ctx.globalAlpha = .6 * (1 - s); A.circle(x - 10 + i * 10, y - 26 - s * 40, 8 + s * 8, '#6a6a6a', 0); ctx.restore(); } }
+    else if (k === 'bouillie'){ ell(x, y - 8, 30, 12, '#8fbf4a'); A.circle(x - 10, y - 12, 4, '#6a9a2a', 0); A.circle(x + 8, y - 10, 5, '#6a9a2a', 0);
+      for (let i = 0; i < 2; i++){ const s = (t * .6 + i / 2) % 1; ctx.save(); ctx.globalAlpha = .7 * (1 - s); A.circle(x - 6 + i * 12, y - 22 - s * 36, 6 + s * 6, '#9fd84a', 0); ctx.restore(); } }
+    if (p.bad){ // une mouche qui tourne
+      const a = t * 7 + x; const fx = x + Math.cos(a) * 30, fy = y - 40 + Math.sin(a * 1.3) * 12;
+      A.circle(fx, fy, 4, COL.ink, 0); ell(fx - 4, fy - 4, 4, 2.5, 'rgba(200,230,255,.9)', 1); ell(fx + 4, fy - 4, 4, 2.5, 'rgba(200,230,255,.9)', 1);
+    } else if (Math.sin(t * 5 + x) > .7) A.star(x + 30, y - 34, 7, COL.yellow, 2);
+    ctx.restore();
+  }
+  function draw(){
+    ctx = A.ctx();
+    ctx.fillStyle = '#ffeec2'; ctx.fillRect(-200, -300, 760, 1100);
+    // nappe à carreaux
+    ctx.fillStyle = '#fff'; ctx.fillRect(-200, 330, 760, 400);
+    for (let x = -200; x < 560; x += 30) for (let y = 330; y < 730; y += 30) if ((Math.round((x + 200) / 30) + Math.round(y / 30)) % 2 === 0){ ctx.fillStyle = '#ff9a9a'; ctx.fillRect(x, y, 30, 30); }
+    ln([[-200, 330], [560, 330]], 5, COL.ink);
+    const slide = G.phase === 'arrive' ? (G.pt / .45) * 420 : 0, gone = G.phase === 'mange' ? G.forks : 0;
+    G.plats.forEach((p, i) => {
+      const x = p.x + slide;
+      ctx.save(); if (gone > .5){ ctx.globalAlpha = 1 - (gone - .5) * 2; }
+      plat(p, x, PY, G.t); ctx.restore();
+      if (p.flash > 0){ ctx.fillStyle = `rgba(255,255,255,${p.flash})`; ctx.beginPath(); ctx.arc(x, PY - 14, 60, 0, Math.PI * 2); ctx.fill(); }
+      // viseur d'appareil photo autour des plats
+      if (G.phase === 'photo'){ const c = 'rgba(29,21,48,.5)'; [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([sx, sy]) => ln([[x + sx * 52, PY - 14 + sy * 34], [x + sx * 52, PY - 14 + sy * 20]], 3, c)); }
+      // fourchettes qui arrivent
+      if (gone > 0){ const fy = PY - 200 + gone * 170; ctx.save(); ctx.translate(x + 20, fy); ctx.rotate(.3); A.blob(-4, -60, 8, 60, 3, '#c9c3d9', 3); A.blob(-9, -78, 18, 20, 3, '#c9c3d9', 3); ctx.restore(); }
+    });
+    // HUD
+    A.bigNum(String(G.score), 168, 46, 50, { align: 'right' });
+    A.txt('photos', 178, 58, 22, COL.white, { lw: 6, align: 'left' });
+    A.txt('Manche ' + G.m + '/' + MANCHES, 150, 96, 20, COL.white, { lw: 6 });
+    if (G.phase === 'photo'){ const k = G.pt / DUREE; A.blob(30, 120, 300, 18, 9, '#fff', 4); A.rr(34, 124, 292 * k, 10, 5); ctx.fillStyle = k < .3 ? COL.red : COL.green; ctx.fill(); }
+    if (G.count < 0){ const n = Math.ceil(-G.count / .4), f = (-G.count % .4) / .4;
+      ctx.save(); ctx.translate(180, 260); const s = .7 + f * .6; ctx.scale(s, s); A.bigNum(String(n), 0, 0, 120); ctx.restore(); }
+  }
+  function down(p){
+    if (G.phase !== 'photo' || p.y < 360 || p.y > 660) return;
+    const i = XS.findIndex(x => Math.abs(p.x - x) < 58); if (i < 0) return;
+    const d = G.plats[i];
+    if (d.bad){ G.score -= MALUS; snd.beurk(); A.secousse(5, .2); A.texte('Beurk ! −3', d.x, PY - 90, { size: 26, color: COL.red, dur: .8 }); }
+    else { G.score++; d.n++; d.flash = 1; snd.clic(); }
+  }
+  function vignette(c, x, y, w, h, t){
+    ctx = c; const k = h / 230;
+    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-150, -230);
+    c.fillStyle = '#fff'; c.fillRect(-200, -50, 700, 400);
+    for (let xx = -200; xx < 500; xx += 30) for (let yy = -50; yy < 350; yy += 30) if ((Math.round((xx + 200) / 30) + Math.round((yy + 50) / 30)) % 2 === 0){ c.fillStyle = '#ff9a9a'; c.fillRect(xx, yy, 30, 30); }
+    plat({ k: 'burger', bad: false }, 80, 160, t); plat({ k: 'brule', bad: true }, 220, 160, t);
+    if (Math.sin(t * 6) > .6){ c.fillStyle = 'rgba(255,255,255,.8)'; c.beginPath(); c.arc(80, 146, 60, 0, Math.PI * 2); c.fill(); }
+    c.restore();
+  }
+  Bourdi.ajouter({
+    id: 'photo', titre: 'La Photo du Plat', court: 'La Photo',
+    consigne: 'Avant de manger, on prend les beaux plats en photo ! Tape le plus vite possible sur les jolis plats, mais jamais sur un plat raté.',
+    plusPetitGagne: false,
+    seuils: { S: 115, A: 95, B: 75, C: 58, D: 38 },
+    format: n => Math.max(0, Math.round(n)) + ' photos',
+    musique: 'jeu', vignette,
+    start(){ ctx = A.ctx(); nouvellePartie(); },
+    update, draw, down, etat: () => G
+  });
+})();
+
+</script>
+<script>
+'use strict';
+// =====================================================================
+//  ÉPREUVE 11 — LA TOURNÉE
+//  3 verres se remplissent en même temps, chacun à sa vitesse. On touche
+//  un verre pour l'arrêter au trait. Points selon la précision.
+//  4 manches, score en points. (Soda sans marque.)
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const { ln, ell } = Bourdi.chats;
+  const XS = [66, 180, 294], BASE = 560, MANCHES = 4;
+  const SODAS = [{ c: '#5b2a10', mousse: '#d9b08a' }, { c: '#ff8a1f', mousse: '#ffe2b3' }, { c: '#f2f0a0', mousse: '#ffffff' }];
+  const VERRES = [{ w: 62, h: 110 }, { w: 54, h: 150 }, { w: 78, h: 96 }, { w: 50, h: 130 }, { w: 70, h: 120 }];
+
+  let G;
+  function nouvelleManche(){
+    const vs = VERRES.slice().sort(() => Math.random() - .5), base = .26 + G.m * .06;
+    G.verres = XS.map((x, i) => ({ x, ...vs[i], soda: SODAS[i], f: 0, v: base * (.7 + Math.random() * .8), cible: .62 + Math.random() * .26, stop: false, verdict: null }));
+    G.phase = 'prepare'; G.pt = .7;
+  }
+  function nouvellePartie(){ G = { t: 0, count: -1.2, score: 0, m: 1, end: 0 }; nouvelleManche(); }
+
+  const snd = {
+    count(go){ A.tone(0, go ? 1046 : 523, go ? .3 : .12, .08, 'square'); },
+    pschit(){ A.bruit(0, .35, .15, 'highpass', 2500, 1); },
+    stop(){ A.tone(0, 1200, .06, .06, 'square'); },
+    glou(){ A.bruit(0, .08, .03, 'bandpass', 700 + Math.random() * 500, 4); },
+    deborde(){ A.bruit(0, .4, .12, 'lowpass', 700, 1); A.tone(0, 300, .3, .07, 'sawtooth', 140); },
+    tchin(){ A.tone(0, 2100, .2, .06, 'triangle'); A.tone(.02, 3150, .15, .03, 'sine'); }
+  };
+  function juger(v){
+    const err = Math.abs(v.f - v.cible); let pts, txt, col;
+    if (v.f > 1){ pts = 0; txt = 'Ça déborde !'; col = COL.red; snd.deborde(); A.secousse(5, .2); }
+    else if (err <= .02){ pts = 100; txt = 'Pile poil !'; col = COL.green; snd.tchin(); A.particules(v.x, BASE - v.h * v.f, 14, { speed: 200 }); }
+    else { pts = Math.max(0, Math.round(100 * (1 - err / .15))); txt = pts >= 60 ? 'Presque !' : 'Pas assez !'; if (v.f > v.cible && pts < 60) txt = 'Presque !'; col = pts >= 60 ? COL.yellow : COL.orange; snd.stop(); }
+    v.verdict = { txt, col, pts }; G.score += pts;
+  }
+  function update(dt){
+    G.t += dt;
+    if (G.count < 0){ const b = Math.ceil(-G.count / .4); G.count += dt; const a = Math.ceil(-G.count / .4); if (a !== b) snd.count(a === 0); if (G.count >= 0) G.count = 0; return; }
+    G.pt -= dt;
+    if (G.phase === 'prepare' && G.pt <= 0){ G.phase = 'verse'; snd.pschit(); }
+    else if (G.phase === 'verse'){
+      G.verres.forEach(v => { if (v.stop) return; v.f += v.v * dt; if (v.f > 1.04){ v.stop = true; juger(v); } });
+      if (Math.random() < dt * 10) snd.glou();
+      if (G.verres.every(v => v.stop)){ G.phase = 'bilan'; G.pt = 1.4; }
+    }
+    else if (G.phase === 'bilan' && G.pt <= 0){
+      if (G.m >= MANCHES){ G.phase = 'fin'; G.end = G.t; A.texte('Santé !', 180, 300, { size: 46, color: COL.yellow, dur: 1.3, vy: 0 }); A.sons.bien(); A.particules(180, 300, 40, { speed: 340 }); }
+      else { G.m++; nouvelleManche(); }
+    }
+    else if (G.phase === 'fin' && G.t - G.end > 1.2){ G.phase = 'done'; A.fin({ score: G.score }); }
+  }
+  function verre(v){
+    const x = v.x, w = v.w, h = v.h, b = BASE, top = b - h;
+    const path = () => { ctx.beginPath(); ctx.moveTo(x - w / 2, top); ctx.lineTo(x + w / 2, top); ctx.lineTo(x + w * .42, b); ctx.lineTo(x - w * .42, b); ctx.closePath(); };
+    path(); ctx.fillStyle = 'rgba(220,245,255,.55)'; ctx.fill();
+    ctx.save(); path(); ctx.clip();
+    const ly = b - h * Math.min(1, v.f);
+    if (v.f > 0){ ctx.fillStyle = v.soda.c; ctx.fillRect(x - w, ly, w * 2, b - ly); ctx.fillStyle = v.soda.mousse; ctx.fillRect(x - w, ly - 5, w * 2, 7);
+      for (let i = 0; i < 4; i++){ const by = b - ((G.t * 60 + i * 37) % Math.max(1, b - ly)); A.circle(x - 10 + i * 7, by, 2, 'rgba(255,255,255,.6)', 0); } }
+    ctx.restore();
+    path(); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.lineJoin = 'round'; ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,.5)'; ctx.fillRect(x - w / 2 + 8, top + 8, 5, h * .6);
+    // trait
+    const cy = b - h * v.cible;
+    ctx.save(); ctx.setLineDash([7, 6]); ln([[x - w / 2 - 12, cy], [x + w / 2 + 12, cy]], 3, COL.pink); ctx.restore();
+    // bouteille qui verse
+    if (!v.stop && G.phase === 'verse'){ ln([[x, 250], [x, b - h * Math.min(1, v.f)]], 6, v.soda.c); }
+    ctx.save(); ctx.translate(x + (x > 200 ? 8 : 26), 228); ctx.rotate(G.phase === 'verse' && !v.stop ? 2.3 : 1.2);
+    A.blob(-14, -50, 28, 60, 10, 'rgba(120,200,120,.85)', 3); A.blob(-7, -66, 14, 18, 4, 'rgba(120,200,120,.85)', 3); A.blob(-8, -72, 16, 8, 3, COL.red, 2); A.blob(-14, -30, 28, 16, 2, v.soda.c, 2);
+    ctx.restore();
+    if (v.f > 1){ A.blob(x - w / 2 - 6, top - 6, w + 12, 12, 6, v.soda.mousse, 2); ell(x, b + 6, w * .8, 6, v.soda.c, 2); }
+    if (v.verdict){ A.txt(v.verdict.txt, x, b + 36, 16, v.verdict.col, { lw: 5, max: 112 }); A.txt('+' + v.verdict.pts, x, b + 62, 16, COL.white, { lw: 5 }); }
+  }
+  function draw(){
+    ctx = A.ctx();
+    ctx.fillStyle = '#c9f0ff'; ctx.fillRect(-200, -300, 760, 1100);
+    for (let x = -200; x < 560; x += 50){ ctx.fillStyle = '#b5e6fa'; ctx.fillRect(x, -300, 25, 900); }
+    ctx.fillStyle = '#c98a5a'; ctx.fillRect(-200, BASE, 760, 400); ln([[-200, BASE], [560, BASE]], 5, COL.ink);
+    G.verres.forEach(verre);
+    A.bigNum(String(G.score), 168, 46, 50, { align: 'right' });
+    A.txt('pts', 178, 58, 22, COL.white, { lw: 6, align: 'left' });
+    A.txt('Manche ' + G.m + '/' + MANCHES, 150, 96, 20, COL.white, { lw: 6 });
+    if (G.count < 0){ const n = Math.ceil(-G.count / .4), f = (-G.count % .4) / .4;
+      ctx.save(); ctx.translate(180, 400); const s = .7 + f * .6; ctx.scale(s, s); A.bigNum(String(n), 0, 0, 120); ctx.restore(); }
+  }
+  function down(p){
+    if (G.phase !== 'verse' || p.y < 200) return;
+    const i = XS.findIndex(x => Math.abs(p.x - x) < 58); if (i < 0) return;
+    const v = G.verres[i]; if (v.stop) return;
+    v.stop = true; juger(v);
+  }
+  function vignette(c, x, y, w, h, t){
+    ctx = c; const k = h / 230;
+    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-150, -230);
+    c.fillStyle = '#c9f0ff'; c.fillRect(-200, -50, 700, 400); c.fillStyle = '#c98a5a'; c.fillRect(-200, 200, 700, 100);
+    const save = G; G = { t, phase: 'x' };
+    c.save(); c.translate(0, 200 - BASE);
+    [[70, 0, .4], [150, 1, .7], [230, 2, .55]].forEach(([xx, i, f]) => verre({ x: xx, w: 54, h: 110, soda: SODAS[i], f: (f + t * .2) % 1, cible: .75, stop: true, verdict: null }));
+    c.restore(); G = save;
+    c.restore();
+  }
+  Bourdi.ajouter({
+    id: 'tournee', titre: 'La Tournée', court: 'La Tournée',
+    consigne: 'Les trois verres se remplissent en même temps ! Touche chaque verre pour l\'arrêter pile au trait. Attention, ça déborde vite.',
+    plusPetitGagne: false,
+    seuils: { S: 1100, A: 960, B: 800, C: 600, D: 350 },
+    format: n => Math.max(0, Math.round(n)) + ' pts',
+    musique: 'jeu', vignette,
+    start(){ ctx = A.ctx(); nouvellePartie(); },
+    update, draw, down, etat: () => G
   });
 })();
 
