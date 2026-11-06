@@ -2039,6 +2039,184 @@ pseudoShow(scene === 'name');
 })();
 
 </script>
+<script>
+'use strict';
+// =====================================================================
+//  ÉPREUVE 5 — LA DOUCHE
+//  L'eau change de température toute seule (et d'un coup quand quelqu'un
+//  tire la chasse ou lance la machine). On fait glisser le robinet pour
+//  rester dans la zone tiède. Score = temps passé dans le tiède (30 s).
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const { ln, ell } = Bourdi.chats;
+  const DUREE = 30;
+  const GX0 = 30, GX1 = 330, GY = 560;          // jauge de température
+  const RY = 652;                               // rail du robinet
+
+  let G;
+  function nouvellePartie(){
+    G = { t: 0, count: -1.2, play: 0, score: 0, T: .5, d: 0, k: 0, kx: 180, drag: null, next: 3 + Math.random() * 2, end: 0, steam: [], drops: [], face: 'ok', lastFace: 'ok', sayT: 0 };
+  }
+  const hw = () => .15 - .06 * Math.min(1, G.play / DUREE);          // la zone tiède rétrécit
+  const zone = () => Math.abs(G.T - .5) < hw();
+
+  // ---------- Sons ----------
+  const snd = {
+    count(go){ A.tone(0, go ? 1046 : 523, go ? .3 : .12, .08, 'square'); },
+    chasse(){ A.bruit(0, 1.0, .14, 'bandpass', 2200, 1.2, 300); },
+    machine(){ A.tone(0, 60, .9, .12, 'sawtooth', 80); A.bruit(0, .9, .06, 'lowpass', 300, 1); },
+    brrr(){ for (let i = 0; i < 6; i++) A.tone(i * .05, 180, .04, .06, 'square'); },
+    aie(){ A.tone(0, 700, .3, .08, 'sawtooth', 1100); },
+    la(){ const n = [72, 76, 79, 76][Math.floor(Math.random() * 4)]; A.tone(0, 440 * Math.pow(2, (n - 69) / 12), .25, .04, 'triangle'); }
+  };
+
+  // ---------- Logique ----------
+  function update(dt){
+    G.t += dt;
+    if (G.count < 0){ const b = Math.ceil(-G.count / .4); G.count += dt; const a = Math.ceil(-G.count / .4); if (a !== b) snd.count(a === 0); if (G.count >= 0) G.count = 0; return; }
+    if (G.end){ if (G.t - G.end > 1.2 && G.end > 0){ G.end = -1; A.fin({ score: Math.round(G.score * 10) * 100 }); } return; }
+    G.play += dt;
+    // la chaudière n'en fait qu'à sa tête : dérive lente + coups de chaud / de froid
+    const amp = .5 + .6 * Math.min(1, G.play / DUREE);
+    G.d += (Math.random() - .5) * 1.6 * amp * dt * 2 - G.d * dt * .25;
+    G.next -= dt;
+    if (G.next <= 0){
+      G.next = 2.6 + Math.random() * 2.4 - Math.min(1, G.play / DUREE) * 1;
+      if (Math.random() < .5){ G.d += .28; A.texte('Quelqu\'un tire la chasse !', 180, 150, { size: 22, color: COL.orange, dur: 1.4 }); snd.chasse(); }
+      else { G.d -= .28; A.texte('La machine à laver démarre !', 180, 150, { size: 22, color: COL.sky, dur: 1.4 }); snd.machine(); }
+      A.secousse(4, .25);
+    }
+    G.d = Math.max(-.55, Math.min(.55, G.d));
+    const target = Math.max(0, Math.min(1, .5 + G.d + G.k));
+    G.T += (target - G.T) * Math.min(1, dt * 4);                     // l'eau met un peu de temps à changer
+    if (zone()) G.score += dt;
+    // visage et petites phrases
+    G.face = G.T < .5 - hw() - .12 ? 'froid' : G.T > .5 + hw() + .12 ? 'chaud' : zone() ? 'ok' : (G.T < .5 ? 'frais' : 'tiede');
+    G.sayT -= dt;
+    if (G.face !== G.lastFace && G.sayT <= 0){
+      if (G.face === 'froid'){ A.texte('Brrr !', 250, 330, { size: 30, color: COL.sky, dur: .8 }); snd.brrr(); G.sayT = 1; }
+      if (G.face === 'chaud'){ A.texte('AÏE !', 250, 330, { size: 34, color: COL.red, dur: .8 }); snd.aie(); A.secousse(5, .2); G.sayT = 1; }
+    }
+    if (G.face === 'ok' && Math.random() < dt * 1.5) snd.la();
+    G.lastFace = G.face;
+    // gouttes et vapeur
+    for (let i = 0; i < 3; i++) G.drops.push({ x: 140 + Math.random() * 80, y: 230, vy: 300 + Math.random() * 200 });
+    G.drops.forEach(d => { d.y += d.vy * dt; }); G.drops = G.drops.filter(d => d.y < 520);
+    if (G.T > .65 && Math.random() < dt * 12) G.steam.push({ x: 120 + Math.random() * 120, y: 470, t: 0 });
+    G.steam.forEach(s => { s.t += dt; s.y -= 40 * dt; }); G.steam = G.steam.filter(s => s.t < 1.5);
+    if (G.play >= DUREE){ G.end = G.t; A.texte('Tout propre !', 180, 300, { size: 40, color: COL.yellow, dur: 1.3, vy: 0 }); A.sons.bien(); A.particules(180, 300, 40, { speed: 340 }); }
+  }
+
+  // ---------- Dessin ----------
+  const lerpC = (a, b, k) => { const pa = a.match(/\w\w/g).map(h => parseInt(h, 16)), pb = b.match(/\w\w/g).map(h => parseInt(h, 16)); return 'rgb(' + pa.map((v, i) => Math.round(v + (pb[i] - v) * k)).join(',') + ')'; };
+  function drawGuy(){
+    const f = G.face, cold = f === 'froid' || f === 'frais', hot = f === 'chaud' || f === 'tiede';
+    const k = Math.max(0, Math.min(1, (G.T - .5) * 2.2));                  // -1 froid … +1 chaud
+    const skin = G.T < .5 ? lerpC('ffd9b8', 'a8d4ff', Math.min(1, (.5 - G.T) * 2.4)) : lerpC('ffd9b8', 'ff6a5a', Math.min(1, (G.T - .5) * 2.4));
+    const shiver = f === 'froid' ? Math.sin(G.t * 60) * 3 : 0;
+    ctx.save(); ctx.translate(180 + shiver, 0);
+    // épaules + tête
+    A.blob(-70, 400, 140, 120, 50, skin, 4);
+    A.circle(0, 350, 50, skin, 4);
+    // bonnet de douche
+    ctx.beginPath(); ctx.arc(0, 340, 52, Math.PI * 1.05, Math.PI * 1.95); ctx.closePath(); ctx.fillStyle = COL.yellow; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.stroke();
+    for (let i = -40; i <= 40; i += 16) A.circle(i, 316 + Math.abs(i) * .25, 4, '#fff', 0);
+    // visage
+    if (f === 'ok'){ [-18, 18].forEach(e => { ctx.beginPath(); ctx.arc(e, 352, 8, Math.PI * 1.1, Math.PI * 1.9); ctx.lineWidth = 3.5; ctx.strokeStyle = COL.ink; ctx.stroke(); });
+      ell(0, 378, 10, 7, '#7a1f3d', 3); ell(-30, 368, 8, 5, '#ff9ab0', 0); ell(30, 368, 8, 5, '#ff9ab0', 0);
+      A.txt('♪', 70 + Math.sin(G.t * 3) * 6, 290 - (G.t * 30 % 40), 26, COL.violet, { lw: 4 }); }
+    else if (cold){ [-18, 18].forEach(e => { ell(e, 350, 9, 11, '#fff', 3); ell(e, 352, 3, 3, COL.ink, 0); });
+      A.blob(-18, 372, 36, 14, 4, '#fff', 3); for (let i = -12; i <= 12; i += 8) ln([[i, 372], [i, 386]], 2, COL.ink);
+      if (f === 'froid'){ [[-36, 392], [32, 394]].forEach(([x, y]) => { ctx.beginPath(); ctx.moveTo(x - 5, y); ctx.lineTo(x + 5, y); ctx.lineTo(x, y + 18); ctx.closePath(); ctx.fillStyle = '#d6f2ff'; ctx.fill(); ctx.lineWidth = 2; ctx.stroke(); }); } }
+    else { [-18, 18].forEach(e => { ell(e, 350, 10, 12, '#fff', 3); ell(e, 352, 2.5, 2.5, COL.ink, 0); }); ell(0, 384, 14, 16, '#7a1f3d', 3);
+      if (f === 'chaud') [[-50, 320], [52, 330]].forEach(([x, y]) => { ctx.beginPath(); ctx.moveTo(x, y); ctx.quadraticCurveTo(x + 8, y + 10, x, y + 18); ctx.quadraticCurveTo(x - 8, y + 10, x, y); ctx.fillStyle = '#9fe3ff'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = COL.ink; ctx.stroke(); }); }
+    ctx.restore();
+  }
+  function draw(){
+    ctx = A.ctx();
+    // salle de bain : carrelage
+    ctx.fillStyle = '#dff4ff'; ctx.fillRect(-200, -300, 760, 1100);
+    for (let y = -300; y < 800; y += 34) for (let x = -200; x < 560; x += 34){ ctx.strokeStyle = '#b8e2f8'; ctx.lineWidth = 2; ctx.strokeRect(x, y, 34, 34); }
+    // pommeau + tuyau
+    ln([[300, 120], [300, 190], [220, 190]], 10, COL.ink); ln([[300, 120], [300, 190], [220, 190]], 5, '#c9c3d9');
+    ctx.beginPath(); ctx.moveTo(150, 200); ctx.lineTo(210, 200); ctx.lineTo(222, 182); ctx.lineTo(138, 182); ctx.closePath(); ctx.fillStyle = '#c9c3d9'; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.stroke();
+    // eau
+    const wc = G.T < .5 ? lerpC('9fe3ff', '2f6bff', Math.min(1, (.5 - G.T) * 2)) : lerpC('9fe3ff', 'ff8a6a', Math.min(1, (G.T - .5) * 2));
+    G.drops.forEach(d => { ln([[d.x, d.y], [d.x, d.y + 12]], 3, wc); });
+    drawGuy();
+    G.steam.forEach(s => { ctx.save(); ctx.globalAlpha = .5 * (1 - s.t / 1.5); A.circle(s.x + Math.sin(s.t * 4) * 8, s.y, 14 + s.t * 10, '#fff', 0); ctx.restore(); });
+    // rideau de douche (le bas du corps est caché, on reste correct !)
+    ctx.fillStyle = '#ff7fb8'; ctx.beginPath(); ctx.moveTo(-200, 470);
+    for (let x = -200; x <= 560; x += 30) ctx.quadraticCurveTo(x + 15, 462, x + 30, 470);
+    ctx.lineTo(560, 540); ctx.lineTo(-200, 540); ctx.closePath(); ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.stroke();
+    for (let x = -190; x < 560; x += 30) ln([[x, 474], [x + 6, 536]], 3, '#ff4fa3');
+    for (let x = 0; x < 360; x += 60) A.circle(x + 20, 505, 6, '#fff', 0);
+    // jauge de température
+    ctx.fillStyle = '#1d1530'; ctx.fillRect(-200, 540, 760, 400);
+    const g = ctx.createLinearGradient(GX0, 0, GX1, 0); g.addColorStop(0, COL.blue); g.addColorStop(.5, '#f6f3ec'); g.addColorStop(1, COL.red);
+    A.rr(GX0, GY, GX1 - GX0, 34, 17); ctx.fillStyle = g; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = '#fff'; ctx.stroke();
+    const zx0 = GX0 + (GX1 - GX0) * (.5 - hw()), zx1 = GX0 + (GX1 - GX0) * (.5 + hw());
+    A.rr(zx0, GY - 4, zx1 - zx0, 42, 10); ctx.fillStyle = zone() ? 'rgba(122,216,30,.75)' : 'rgba(122,216,30,.45)'; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = COL.green; ctx.stroke();
+    A.txt('❄', GX0 - 2, GY + 17, 20, COL.sky, { lw: 0 }); A.txt('🔥', GX1 + 2, GY + 17, 18, COL.red, { lw: 0 });
+    const nx = GX0 + (GX1 - GX0) * G.T;
+    ctx.beginPath(); ctx.moveTo(nx, GY + 40); ctx.lineTo(nx - 12, GY + 58); ctx.lineTo(nx + 12, GY + 58); ctx.closePath(); ctx.fillStyle = COL.yellow; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = '#fff'; ctx.stroke();
+    ln([[nx, GY - 8], [nx, GY + 42]], 4, '#fff');
+    // rail + robinet (à faire glisser)
+    A.rr(GX0, RY - 5, GX1 - GX0, 10, 5); ctx.fillStyle = '#4a4060'; ctx.fill();
+    const rx = G.kx, held = G.drag != null;
+    ctx.save(); ctx.translate(rx, RY); ctx.rotate((rx - 180) / 150 * 1.2);
+    A.circle(0, 0, held ? 30 : 27, '#d9d9e6', 4, '#fff');
+    for (let i = 0; i < 4; i++){ ctx.rotate(Math.PI / 2); A.blob(-7, -40, 14, 22, 6, '#d9d9e6', 3, '#fff'); }
+    A.circle(0, 0, 11, (rx < 180 ? COL.blue : COL.red), 3, '#fff');
+    ctx.restore();
+    // HUD
+    A.bigNum((Math.floor(G.score * 10) / 10).toFixed(1).replace('.', ','), 196, 46, 50, { align: 'right' });
+    A.txt('s', 206, 58, 22, COL.white, { lw: 6, align: 'left' });
+    const left = Math.max(0, 1 - G.play / DUREE);
+    A.blob(30, 86, 300, 18, 9, '#fff', 4); if (left > 0){ A.rr(34, 90, 292 * left, 10, 5); ctx.fillStyle = left < .2 ? COL.red : COL.violet; ctx.fill(); }
+    if (G.count < 0){ const n = Math.ceil(-G.count / .4), f = (-G.count % .4) / .4;
+      ctx.save(); ctx.translate(180, 300); const s = .7 + f * .6; ctx.scale(s, s); A.bigNum(String(n), 0, 0, 120); ctx.restore(); }
+  }
+
+  // ---------- Toucher : on fait glisser le robinet ----------
+  function setK(x){ G.kx = Math.max(GX0, Math.min(GX1, x)); G.k = (G.kx - 180) / 150 * .55; }
+  function down(p, id){ if (p.y > 530){ G.drag = id; setK(p.x); } }
+  function move(p, id){ if (G.drag === id) setK(p.x); }
+  function up(p, id){ if (id === 'all' || G.drag === id) G.drag = null; }
+
+  // ---------- Vignette ----------
+  function vignette(c, x, y, w, h, t){
+    ctx = c; const k = h / 230;
+    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-150, -230);
+    c.fillStyle = '#dff4ff'; c.fillRect(-200, -50, 700, 400);
+    c.beginPath(); c.moveTo(110, 30); c.lineTo(190, 30); c.lineTo(200, 12); c.lineTo(100, 12); c.closePath(); c.fillStyle = '#c9c3d9'; c.fill(); c.lineWidth = 4; c.strokeStyle = COL.ink; c.stroke();
+    for (let i = 0; i < 9; i++){ const yy = 40 + ((t * 200 + i * 37) % 80); ln([[110 + i * 10, yy], [110 + i * 10, yy + 10]], 3, '#5ec8ff'); }
+    const hot = Math.sin(t * 1.5) > 0;
+    A.circle(150, 150, 44, hot ? '#ff6a5a' : '#a8d4ff', 4);
+    c.beginPath(); c.arc(150, 142, 46, Math.PI * 1.05, Math.PI * 1.95); c.closePath(); c.fillStyle = COL.yellow; c.fill(); c.lineWidth = 4; c.stroke();
+    [-16, 16].forEach(e => { ell(150 + e, 150, 8, 10, '#fff', 3); ell(150 + e, 152, 2.5, 2.5, COL.ink, 0); }); ell(150, 176, 10, 12, '#7a1f3d', 3);
+    c.fillStyle = '#ff7fb8'; c.fillRect(-200, 196, 700, 60); ln([[-200, 196], [500, 196]], 4, COL.ink);
+    A.txt(hot ? 'AÏE !' : 'Brrr !', 250, 90, 30, hot ? COL.red : COL.sky, { lw: 7 });
+    c.restore();
+  }
+
+  Bourdi.ajouter({
+    id: 'douche', titre: 'La Douche', court: 'La Douche',
+    consigne: 'L\'eau change de température sans prévenir ! Fais glisser le robinet à gauche ou à droite pour garder l\'eau tiède le plus longtemps possible.',
+    plusPetitGagne: false,
+    seuils: { S: 23000, A: 20000, B: 16500, C: 13000, D: 9000 },
+    format: ms => (Math.max(0, ms) / 1000).toFixed(1).replace('.', ',') + ' s',
+    musique: 'jeu',
+    vignette,
+    start(){ ctx = A.ctx(); nouvellePartie(); },
+    update, draw, down, move, up,
+    etat: () => G
+  });
+})();
+
+</script>
 <!-- FIN -->
 <script>Bourdi.demarrer();</script>
 
