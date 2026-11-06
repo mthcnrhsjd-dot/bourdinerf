@@ -900,7 +900,8 @@ pseudoShow(scene === 'name');
     A.circle(-hr, hy + 4, 6, face, 3); A.circle(hr, hy + 4, 6, face, 3);
     // visage
     const ex = hr * .38, ey = hy - 2, expr = o.expr || 'smile';
-    [-ex, ex].forEach(e => { ell(e, ey, 7, 8.5, '#fff', 2.5); ell(e + (expr === 'shock' ? 0 : 1), ey + 1, expr === 'shock' ? 2 : 3.6, expr === 'shock' ? 2 : 4.4, COL.ink, 0); });
+    if (expr === 'sleep') [-ex, ex].forEach(e => { ctx.beginPath(); ctx.arc(e, ey - 2, 7, Math.PI * .15, Math.PI * .85); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke(); });
+    else [-ex, ex].forEach(e => { ell(e, ey, 7, 8.5, '#fff', 2.5); ell(e + (expr === 'shock' ? 0 : 1), ey + 1, expr === 'shock' ? 2 : 3.6, expr === 'shock' ? 2 : 4.4, COL.ink, 0); });
     if (big){ ell(-hr * .62, hy + 10, 7, 4, '#d83a2a', 0); ell(hr * .62, hy + 10, 7, 4, '#d83a2a', 0);
       ln([[-ex - 7, ey - 12], [-ex + 6, ey - 9]], 3.5, COL.ink); ln([[ex + 7, ey - 12], [ex - 6, ey - 9]], 3.5, COL.ink);
       ctx.beginPath(); ctx.moveTo(4, hy - hr * .7); ctx.quadraticCurveTo(10, hy - hr * .45, 4, hy - hr * .35); ctx.quadraticCurveTo(-2, hy - hr * .45, 4, hy - hr * .7); ctx.fillStyle = '#9fe3ff'; ctx.fill(); ctx.lineWidth = 2; ctx.stroke();
@@ -911,6 +912,7 @@ pseudoShow(scene === 'name');
         [-1, 1].forEach(d => { const k = (t * 1.5 + (d > 0 ? .5 : 0)) % 1; ctx.save(); ctx.globalAlpha = 1 - k; ell(d * (hr + 6 + k * 10), hy - 10 + k * 20, 3, 5, '#9fe3ff', 1.5); ctx.restore(); }); }
       else orange(0, hy + 19, 13);
     }
+    else if (expr === 'sleep') ell(0, hy + 16, 5, 6, '#7a1f3d', 2.5);
     else if (expr === 'shock') ell(0, hy + 15, 6, 8, '#7a1f3d', 2.5);
     else if (expr === 'sad'){ ctx.beginPath(); ctx.arc(0, hy + 21, 8, Math.PI * 1.15, Math.PI * 1.85); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke(); }
     else if (expr === 'grin'){ A.blob(-10, hy + 12, 20, 9, 4, '#fff', 2.5); }
@@ -2405,6 +2407,383 @@ pseudoShow(scene === 'name');
     vignette,
     start(){ ctx = A.ctx(); ids.clear(); nouvellePartie(); },
     update, draw, down, up,
+    etat: () => G
+  });
+})();
+
+</script>
+<script>
+'use strict';
+// =====================================================================
+//  ÉPREUVE 8 — LA SOIRÉE FILM
+//  Tout le monde doit voir le film : réveiller Tonton Roupillon, renvoyer
+//  les enfants au lit, mettre pause quand quelqu'un va aux toilettes.
+//  Score = part du film vue par tout le monde (en %).
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const { ln } = Bourdi.chats;
+  const { drawPerson, makePerson } = Bourdi.persos;
+  const FILM = 40, LIMITE = 64;                     // durée du film, temps réel maximum
+  const SEATS = [76, 142, 218, 284], SEAT_Y = 556, ROUP = 1;
+  const DOOR = { x: 26, y: 290, w: 70, h: 180 };
+  const PB = { x: 180, y: 650 };                     // la télécommande (pause / lecture)
+  const pick = a => a[Math.floor(Math.random() * a.length)];
+
+  let G;
+  function nouvellePartie(){
+    const people = SEATS.map(x => ({ p: makePerson('empty'), x, seat: x, st: 'assis', t: 0 }));
+    people[ROUP].p.shirt = '#7a8a9a'; people[ROUP].p.style = 'chauve';
+    G = { t: 0, count: -1.2, real: 0, film: 0, good: 0, playing: true, end: 0, people,
+      roup: { st: 'eveil', t: 5 + Math.random() * 3, taps: 0 },
+      kid: null, nextKid: 6 + Math.random() * 4, nextPipi: 5 + Math.random() * 3, flick: 0 };
+  }
+  const away = () => G.people.some(q => q.st !== 'assis');
+  const ok = () => !away() && G.roup.st !== 'dort' && !(G.kid && G.kid.st === 'la');
+
+  // ---------- Sons ----------
+  const snd = {
+    count(go){ A.tone(0, go ? 1046 : 523, go ? .3 : .12, .08, 'square'); },
+    ronfle(){ A.tone(0, 90, .5, .08, 'sawtooth', 70); A.bruit(0, .5, .05, 'lowpass', 400, 1); },
+    sursaut(){ A.tone(0, 300, .15, .1, 'square', 600); },
+    porte(){ A.tone(0, 240, .25, .03, 'sawtooth', 360); },
+    aulit(){ A.tone(0, 520, .1, .07, 'triangle', 780); A.tone(.1, 780, .15, .07, 'triangle', 520); },
+    pause(){ A.tone(0, 880, .08, .07, 'square'); },
+    lecture(){ A.tone(0, 660, .06, .06, 'square'); A.tone(.06, 990, .08, .06, 'square'); },
+    pas(){ A.bruit(0, .05, .08, 'lowpass', 600, 1); }
+  };
+
+  // ---------- Logique ----------
+  function update(dt){
+    G.t += dt;
+    if (G.count < 0){ const b = Math.ceil(-G.count / .4); G.count += dt; const a = Math.ceil(-G.count / .4); if (a !== b) snd.count(a === 0); if (G.count >= 0) G.count = 0; return; }
+    if (G.end){ if (G.end > 0 && G.t - G.end > 1.3){ G.end = -1; A.fin({ score: Math.round(G.good / FILM * 100) }); } return; }
+    G.real += dt;
+    const dur = Math.min(1, G.real / 40);               // ça se corse avec le temps
+    if (G.playing){ G.film += dt; if (ok()) G.good += dt; }
+    // Tonton Roupillon
+    const R = G.roup; R.t -= dt;
+    if (R.st === 'eveil' && R.t <= 0){ R.st = 'somnole'; R.t = 1.4; }
+    else if (R.st === 'somnole' && R.t <= 0){ R.st = 'dort'; R.taps = 0; R.zz = 0; snd.ronfle(); }
+    else if (R.st === 'dort'){ R.zz = (R.zz || 0) + dt; if (R.zz > 1.6){ R.zz = 0; snd.ronfle(); } }
+    // les enfants qui se réveillent
+    G.nextKid -= dt;
+    if (!G.kid && G.nextKid <= 0){ G.kid = { st: 'porte', t: 0, x: DOOR.x + DOOR.w / 2, y: DOOR.y + DOOR.h, p: makePerson('empty') }; G.kid.p.shirt = pick(['#8fd0ff', '#ffb3d9', '#b8f08a']); snd.porte(); }
+    if (G.kid){ const k = G.kid; k.t += dt;
+      if (k.st === 'porte' && k.t > .5){ k.st = 'marche'; k.t = 0; }
+      else if (k.st === 'marche'){ const u = Math.min(1, k.t / (3.4 - dur)); k.x = DOOR.x + DOOR.w / 2 + (180 - DOOR.x - DOOR.w / 2) * u; k.y = DOOR.y + DOOR.h + (640 - DOOR.y - DOOR.h) * u; if (u >= 1) k.st = 'la'; }
+      else if (k.st === 'retour'){ k.x -= 260 * dt; k.y -= 110 * dt; if (k.x < DOOR.x + 20){ G.kid = null; G.nextKid = 7 + Math.random() * 5 - dur * 2; } }
+    }
+    // quelqu'un va aux toilettes
+    G.nextPipi -= dt;
+    if (G.nextPipi <= 0 && !away()){
+      const q = pick(G.people.filter((q, i) => i !== ROUP));
+      q.st = 'part'; q.t = 0; q.said = false; G.nextPipi = 11 + Math.random() * 4 - dur * 2;
+    }
+    G.people.forEach(q => { q.t += dt;
+      if (q.st === 'part'){ if (!q.said && q.t > .3 && G.playing){ q.said = true; A.texte('Attendez-moi !', 230, 400, { size: 26, color: COL.orange, dur: 1.1 }); }
+        q.x = q.seat + (420 - q.seat) * Math.min(1, q.t / .6); if (q.t > .6){ q.st = 'absent'; q.t = 0; q.dur = 1.4 + Math.random() * .8; } }
+      else if (q.st === 'absent' && q.t > q.dur){ q.st = 'revient'; q.t = 0; }
+      else if (q.st === 'revient'){ q.x = 420 + (q.seat - 420) * Math.min(1, q.t / .6); if (Math.random() < dt * 8) snd.pas(); if (q.t > .6){ q.st = 'assis'; q.x = q.seat; } }
+    });
+    G.flick += dt;
+    if (G.film >= FILM || G.real >= LIMITE){ G.end = G.t; G.playing = false; A.texte('Fin du film !', 180, 300, { size: 40, color: COL.yellow, dur: 1.4, vy: 0 }); A.sons.bien(); A.particules(180, 300, 40, { speed: 340 }); }
+  }
+
+  // ---------- Dessin ----------
+  function draw(){
+    ctx = A.ctx();
+    // salon dans le noir, éclairé par la télé
+    ctx.fillStyle = '#2a2350'; ctx.fillRect(-200, -300, 760, 1100);
+    for (let x = -200; x < 560; x += 40){ ctx.fillStyle = '#322a5e'; ctx.fillRect(x, -300, 16, 820); }
+    ctx.fillStyle = '#4a3a2a'; ctx.fillRect(-200, 520, 760, 400); ln([[-200, 520], [560, 520]], 5, COL.ink);
+    // porte des chambres
+    const open = G.kid && G.kid.st === 'porte' ? Math.min(1, G.kid.t / .3) : G.kid ? 1 : 0;
+    A.blob(DOOR.x - 8, DOOR.y - 8, DOOR.w + 16, DOOR.h + 8, 4, '#5a4a7a', 4);
+    ctx.fillStyle = open ? '#ffe9a8' : '#1d1530'; ctx.fillRect(DOOR.x, DOOR.y, DOOR.w, DOOR.h);
+    A.blob(DOOR.x, DOOR.y, DOOR.w * (1 - open * .75), DOOR.h, 3, '#8a6a9a', 3);
+    // cadre au mur
+    A.blob(150, 200, 90, 66, 4, '#c98a5a', 4); A.blob(158, 208, 74, 50, 2, '#5a8ad8', 2); A.circle(178, 236, 9, COL.yellow, 0);
+    // canapé (dos), puis les gens, puis l'avant du canapé
+    A.blob(40, 440, 280, 90, 26, '#3a6ad8', 5);
+    G.people.forEach((q, i) => {
+      if (q.st !== 'assis') return;
+      if (i === ROUP){
+        const R = G.roup, nod = R.st === 'somnole' ? Math.sin(G.t * 5) * .12 + .08 : R.st === 'dort' ? .28 : 0;
+        drawPerson(q.p, q.x, SEAT_Y, .68, G.t, { sit: true, rot: nod, expr: R.st === 'eveil' ? 'smile' : 'sleep' });
+        if (R.st === 'dort') A.txt('Zzz…', q.x + 44, 410 + Math.sin(G.t * 3) * 6, 26, COL.sky, { lw: 6 });
+      } else drawPerson(q.p, q.x, SEAT_Y, .68, G.t, { sit: true, expr: 'smile' });
+    });
+    A.blob(30, 520, 300, 46, 16, '#2f5ac0', 5); A.blob(18, 478, 40, 92, 16, '#3a6ad8', 4); A.blob(302, 478, 40, 92, 16, '#3a6ad8', 4);
+    // ceux qui vont aux toilettes
+    G.people.forEach(q => { if (q.st === 'part' || q.st === 'revient') drawPerson(q.p, q.x, 640, .7, G.t, { walk: true, expr: 'smile' }); });
+    // l'enfant en pyjama
+    if (G.kid){ const k = G.kid, s = .4 + .25 * ((k.y - DOOR.y - DOOR.h) / (640 - DOOR.y - DOOR.h));
+      drawPerson(k.p, k.x, k.y, s, G.t, { walk: k.st !== 'la', expr: k.st === 'retour' ? 'sad' : 'smile' }); }
+    // lumière de la télé
+    const fl = .1 + Math.sin(G.flick * 7) * .03 + Math.sin(G.flick * 13) * .02;
+    ctx.fillStyle = G.playing ? `rgba(120,200,255,${fl})` : 'rgba(0,0,0,.15)'; ctx.fillRect(-200, -300, 760, 1100);
+    // la télécommande : son gros bouton met le film en pause / le relance
+    A.rr(PB.x - 44, PB.y - 46, 88, 120, 22); ctx.fillStyle = '#000'; ctx.fill();
+    A.blob(PB.x - 44, PB.y - 52, 88, 120, 22, '#2f2a3d', 4, '#8a80a8');
+    [[-24, COL.red], [0, COL.green], [24, COL.yellow]].forEach(([dx, c]) => A.circle(PB.x + dx, PB.y + 48, 6, c, 2));
+    A.circle(PB.x, PB.y + 4, 30, COL.ink, 0);
+    A.circle(PB.x, PB.y, 30, G.playing ? COL.orange : COL.green, 4, '#fff');
+    if (G.playing){ A.blob(PB.x - 12, PB.y - 14, 9, 28, 3, '#fff', 2.5); A.blob(PB.x + 3, PB.y - 14, 9, 28, 3, '#fff', 2.5); }
+    else { ctx.beginPath(); ctx.moveTo(PB.x - 9, PB.y - 15); ctx.lineTo(PB.x + 15, PB.y); ctx.lineTo(PB.x - 9, PB.y + 15); ctx.closePath(); ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 2.5; ctx.strokeStyle = COL.ink; ctx.stroke(); }
+    // HUD : % vu par tout le monde + avancée du film
+    A.bigNum(String(Math.round(G.good / FILM * 100)), 186, 46, 50, { align: 'right' });
+    A.txt('%', 196, 58, 24, COL.white, { lw: 6, align: 'left' });
+    A.blob(30, 86, 300, 18, 9, '#fff', 4);
+    const k = Math.min(1, G.film / FILM); if (k > 0){ A.rr(34, 90, 292 * k, 10, 5); ctx.fillStyle = ok() ? COL.green : COL.red; ctx.fill(); }
+    if (G.count < 0){ const n = Math.ceil(-G.count / .4), f = (-G.count % .4) / .4;
+      ctx.save(); ctx.translate(180, 330); const s = .7 + f * .6; ctx.scale(s, s); A.bigNum(String(n), 0, 0, 120); ctx.restore(); }
+  }
+
+  // ---------- Toucher ----------
+  function down(p){
+    if (G.count < 0 || G.end) return;
+    if (Math.abs(p.x - PB.x) < 50 && p.y > PB.y - 56 && p.y < PB.y + 72){ G.playing = !G.playing; G.playing ? snd.lecture() : snd.pause(); return; }
+    const k = G.kid;
+    if (k && k.st !== 'retour' && Math.abs(p.x - k.x) < 50 && p.y > k.y - 150 && p.y < k.y + 20){
+      k.st = 'retour'; A.texte('Au lit !', k.x, k.y - 140, { size: 28, color: COL.yellow, dur: .9 }); snd.aulit(); return;
+    }
+    const R = G.roup, rx = SEATS[ROUP];
+    if (G.people[ROUP].st === 'assis' && Math.abs(p.x - rx) < 40 && p.y > 380 && p.y < 580 && R.st !== 'eveil'){
+      R.taps++; snd.sursaut(); A.secousse(3, .1);
+      if (R.st === 'somnole' || R.taps >= 3){ R.st = 'eveil'; R.t = 4.5 + Math.random() * 3.5 - Math.min(1, G.real / 40) * 2; A.texte('Non non, je dors pas !', 180, 360, { size: 24, color: COL.white, dur: 1.1 }); }
+    }
+  }
+
+  // ---------- Vignette ----------
+  function vignette(c, x, y, w, h, t){
+    ctx = c; const k = h / 230;
+    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-150, -230);
+    c.fillStyle = '#2a2350'; c.fillRect(-200, -50, 700, 400);
+    A.blob(20, 120, 260, 90, 26, '#3a6ad8', 5);
+    const demo = { kind: 'empty', skin: '#ffd9b8', hair: '#3a2a20', shirt: '#7a8a9a', pants: '#2f2a3d', style: 'chauve' };
+    drawPerson(demo, 150, 230, .9, t, { sit: true, rot: .28, expr: 'sleep' });
+    A.blob(10, 190, 280, 50, 16, '#2f5ac0', 5);
+    A.txt('Zzz…', 220 + Math.sin(t * 2) * 4, 70, 30, COL.sky, { lw: 7 });
+    c.fillStyle = 'rgba(120,200,255,.12)'; c.fillRect(-200, -50, 700, 400);
+    c.restore();
+  }
+
+  Bourdi.ajouter({
+    id: 'film', titre: 'La Soirée Film', court: 'La Soirée Film',
+    consigne: 'Tout le monde doit voir le film jusqu\'au bout ! Réveille Tonton Roupillon, renvoie les enfants au lit, et mets le film en pause quand quelqu\'un va aux toilettes.',
+    plusPetitGagne: false,
+    seuils: { S: 96, A: 92, B: 86, C: 75, D: 55 },
+    format: n => Math.max(0, Math.round(n)) + ' %',
+    musique: 'jeu',
+    vignette,
+    start(){ ctx = A.ctx(); nouvellePartie(); },
+    update, draw, down,
+    etat: () => G
+  });
+})();
+
+</script>
+<script>
+'use strict';
+// =====================================================================
+//  ÉPREUVE 7 — LE COULOIR
+//  La nuit, aller de la chambre aux toilettes. Lumière allumée quelques
+//  secondes pour repérer les pièges, puis noir : on touche les cases une
+//  par une. Piège = +2 s ; 3 pièges dans la même nuit = toute la maison
+//  se réveille et on recommence la nuit. Score = chrono sur 3 nuits.
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const { LOOKS, drawCat, ln, ell } = Bourdi.chats;
+  const { drawPerson, makePerson } = Bourdi.persos;
+  const COLS = 5, ROWS = 8, CS = 58, GX = (360 - COLS * CS) / 2, GY = 160;   // damier
+  const NUITS = [{ pieges: 7, vu: 3 }, { pieges: 10, vu: 2.5 }, { pieges: 13, vu: 2 }];
+  const PEN = 2000, BRUIT_MAX = 3;
+  const cx = c => GX + c * CS + CS / 2, cy = r => GY + (ROWS - 1 - r) * CS + CS / 2;   // rangée 0 = en bas
+
+  // ---------- Les pièges (vus du dessus) ----------
+  function drawTrap(k, x, y){
+    ctx.save(); ctx.translate(x, y);
+    if (k === 'lego'){ A.blob(-16, -10, 32, 20, 3, COL.red, 3); [-8, 8].forEach(dx => [-3].forEach(() => A.circle(dx, -1, 5, '#ff6a6a', 2.5))); }
+    else if (k === 'lego2'){ A.blob(-10, -14, 20, 28, 3, COL.blue, 3); [-6, 6].forEach(dy => A.circle(0, dy, 5, '#6a9aff', 2.5)); }
+    else if (k === 'voiture'){ A.blob(-18, -10, 36, 20, 8, COL.green, 3); A.blob(-8, -7, 14, 14, 4, '#bfeaff', 2); [[-12, -12], [10, -12], [-12, 12], [10, 12]].forEach(([a, b]) => A.blob(a - 4, b - 2, 8, 4, 2, COL.ink, 0)); }
+    else if (k === 'banane'){ ctx.rotate(.4); ctx.beginPath(); ctx.moveTo(-18, -4); ctx.quadraticCurveTo(0, 16, 18, -4); ctx.quadraticCurveTo(0, 6, -18, -4); ctx.fillStyle = COL.yellow; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke(); }
+    else if (k === 'canard'){ ell(-2, 2, 14, 11, COL.yellow); A.circle(8, -8, 8, COL.yellow, 3); ell(16, -7, 5, 2.5, COL.orange, 2); ell(9, -10, 1.6, 1.6, COL.ink, 0); }
+    else if (k === 'chat'){ drawCat(LOOKS.brabus, 2, 18, .45, 'sit', G ? G.t : 0, { expr: 'happy' }); }
+    ctx.restore();
+  }
+  const TRAP_KINDS = ['lego', 'lego2', 'lego', 'voiture', 'banane', 'canard', 'lego2'];
+
+  // ---------- État ----------
+  let G;
+  function chemin(traps, start, goal){
+    // vérifie qu'il existe un chemin sans piège (déplacements haut/bas/gauche/droite)
+    const seen = new Set([start.join()]), q = [start];
+    while (q.length){ const [c, r] = q.shift(); if (c === goal[0] && r === goal[1]) return true;
+      [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([dc, dr]) => { const n = [c + dc, r + dr], k = n.join();
+        if (n[0] >= 0 && n[0] < COLS && n[1] >= 0 && n[1] < ROWS && !seen.has(k) && !traps[k]){ seen.add(k); q.push(n); } }); }
+    return false;
+  }
+  function nouvelleNuit(){
+    const N = NUITS[G.nuit - 1], start = [2, 0], goal = [Math.floor(Math.random() * COLS), ROWS - 1];
+    let traps;
+    do {
+      traps = {};
+      const kinds = TRAP_KINDS.slice(); const list = [];
+      for (let i = 0; i < N.pieges; i++) list.push(i === 0 ? 'chat' : kinds[i % kinds.length]);
+      list.forEach(k => { let c, r, key; do { c = Math.floor(Math.random() * COLS); r = 1 + Math.floor(Math.random() * (ROWS - 2)); key = c + ',' + r; } while (traps[key]); traps[key] = { k, seen: false }; });
+    } while (!chemin(traps, start, goal));
+    G.traps = traps; G.start = start; G.goal = goal;
+    debutNuit();
+  }
+  function debutNuit(){
+    G.pos = G.start.slice(); G.prev = G.start.slice(); G.bruit = 0;
+    Object.values(G.traps).forEach(t => { t.seen = false; });
+    G.phase = 'lumiere'; G.pt = NUITS[G.nuit - 1].vu; G.flash = 0;
+  }
+  function nouvellePartie(){ G = { t: 0, count: -1.2, ms: 0, pen: 0, nuit: 1, end: 0, steps: 0, famille: null }; nouvelleNuit(); }
+
+  // ---------- Sons ----------
+  const snd = {
+    count(go){ A.tone(0, go ? 1046 : 523, go ? .3 : .12, .08, 'square'); },
+    pas(n){ A.bruit(0, .06, .12, 'lowpass', 500 + (n % 2) * 150, 1); A.tone(0, 90, .05, .06, 'sine', 60); },
+    clic(){ A.tone(0, 1800, .03, .08, 'square'); A.bruit(0, .03, .1, 'highpass', 3000, 1); },
+    aie(){ A.tone(0, 600, .35, .1, 'sawtooth', 1100); A.bruit(0, .1, .2, 'bandpass', 2500, 2); },
+    miaou(){ A.tone(0, 600, .12, .09, 'sawtooth', 950); A.tone(.11, 950, .3, .09, 'sawtooth', 450); },
+    pouet(){ A.tone(0, 700, .12, .12, 'square', 900); A.tone(.12, 900, .2, .12, 'square', 600); },
+    glisse(){ A.tone(0, 900, .3, .07, 'sine', 200); A.bruit(0, .3, .08, 'bandpass', 1500, 2, 400); },
+    reveil(){ A.tone(0, 220, .6, .1, 'sawtooth', 180); A.tone(0, 277, .6, .06, 'sawtooth', 220); A.bruit(0, .5, .08, 'lowpass', 600, 1); },
+    chasse(){ A.bruit(0, 1.0, .14, 'bandpass', 2200, 1.2, 300); }
+  };
+
+  // ---------- Logique ----------
+  function marche(c, r){
+    const d = Math.abs(c - G.pos[0]) + Math.abs(r - G.pos[1]);
+    if (d !== 1 || c < 0 || c >= COLS || r < 0 || r >= ROWS) return;
+    G.prev = G.pos.slice(); G.pos = [c, r]; G.steps++; snd.pas(G.steps);
+    const t = G.traps[c + ',' + r];
+    if (t){
+      t.seen = true; G.flash = .35; G.pen += PEN; G.bruit++;
+      const x = cx(c), y = cy(r);
+      if (t.k === 'chat'){ A.texte('MIAOU !', x, y - 40, { size: 30, color: COL.pink, dur: .9 }); snd.miaou(); }
+      else if (t.k === 'canard'){ A.texte('POUET !', x, y - 40, { size: 30, color: COL.yellow, dur: .9 }); snd.pouet(); }
+      else if (t.k === 'banane'){ A.texte('Ça glisse !', x, y - 40, { size: 26, color: COL.yellow, dur: .9 }); snd.glisse(); G.pos = G.prev.slice(); }
+      else { A.texte('AÏE !', x, y - 40, { size: 34, color: COL.red, dur: .9 }); snd.aie(); }
+      A.texte('+2 s', x + 50, y, { size: 22, color: COL.red, dur: .8 }); A.secousse(7, .25);
+      if (G.bruit >= BRUIT_MAX){
+        G.phase = 'reveil'; G.pt = 2.0; G.famille = [makePerson('empty'), makePerson('empty'), makePerson('bidou')];
+        A.texte('Mais t\'es encore réveillé ?!', 180, 300, { size: 26, color: COL.yellow, dur: 1.9, vy: 0 }); snd.reveil();
+      }
+      return;
+    }
+    if (c === G.goal[0] && r === G.goal[1]){
+      G.phase = 'arrive'; G.pt = 1.1; A.texte('Ouf !', 180, 130, { size: 40, color: COL.green, dur: 1, vy: 0 }); snd.chasse();
+    }
+  }
+  function update(dt){
+    G.t += dt; G.flash = Math.max(0, G.flash - dt);
+    if (G.count < 0){ const b = Math.ceil(-G.count / .4); G.count += dt; const a = Math.ceil(-G.count / .4); if (a !== b) snd.count(a === 0); if (G.count >= 0) G.count = 0; return; }
+    G.pt -= dt;
+    if (G.phase === 'lumiere'){ if (G.pt <= 0){ G.phase = 'noir'; A.texte('Clic !', 180, 130, { size: 30, color: COL.white, dur: .7 }); snd.clic(); } }
+    else if (G.phase === 'noir'){ G.ms += dt * 1000; }
+    else if (G.phase === 'reveil'){ G.ms += dt * 1000; if (G.pt <= 0){ G.famille = null; debutNuit(); } }
+    else if (G.phase === 'arrive' && G.pt <= 0){
+      if (G.nuit >= NUITS.length){ G.phase = 'fin'; G.end = G.t; A.texte('Bonne nuit !', 180, 360, { size: 42, color: COL.yellow, dur: 1.3, vy: 0 }); A.sons.bien(); A.particules(180, 360, 40, { speed: 340 }); }
+      else { G.nuit++; nouvelleNuit(); }
+    }
+    else if (G.phase === 'fin' && G.t - G.end > 1.2){ G.phase = 'done'; A.fin({ score: Math.round(G.ms + G.pen) }); }
+  }
+
+  // ---------- Dessin ----------
+  function drawPlayer(x, y){
+    // vu du dessus : épaules en pyjama rayé, tête, bonnet de nuit
+    ell(x, y + 4, 20, 13, '#8fd0ff'); ln([[x - 12, y - 4], [x - 12, y + 12]], 3, '#fff'); ln([[x, y - 8], [x, y + 16]], 3, '#fff'); ln([[x + 12, y - 4], [x + 12, y + 12]], 3, '#fff');
+    A.circle(x, y - 4, 12, '#ffd9b8', 3);
+    ctx.beginPath(); ctx.arc(x, y - 4, 12, Math.PI * .9, Math.PI * 2.1); ctx.lineTo(x + 16, y - 22); ctx.closePath(); ctx.fillStyle = COL.violet; ctx.fill(); ctx.lineWidth = 2.5; ctx.strokeStyle = COL.ink; ctx.stroke();
+    A.circle(x + 16, y - 22, 4, '#fff', 2);
+  }
+  function draw(){
+    ctx = A.ctx();
+    const lit = G.phase === 'lumiere' || G.phase === 'reveil' || G.phase === 'arrive' || G.phase === 'fin' || G.count < 0;
+    // murs + parquet
+    ctx.fillStyle = '#7a5a8a'; ctx.fillRect(-200, -300, 760, 1100);
+    ctx.fillStyle = '#d9a46a'; ctx.fillRect(GX, GY, COLS * CS, ROWS * CS);
+    for (let i = 0; i < COLS; i++) ln([[GX + i * CS, GY], [GX + i * CS, GY + ROWS * CS]], 2, '#b8824a');
+    for (let r = 0; r <= ROWS; r++) ln([[GX, GY + r * CS], [GX + COLS * CS, GY + r * CS]], 1.5, 'rgba(120,70,30,.5)');
+    ctx.lineWidth = 5; ctx.strokeStyle = COL.ink; ctx.strokeRect(GX, GY, COLS * CS, ROWS * CS);
+    // portes : toilettes en haut, chambre en bas, chambres sur les côtés
+    const gx = cx(G.goal[0]);
+    A.blob(gx - 24, GY - 34, 48, 34, 4, G.phase === 'arrive' || G.phase === 'fin' ? COL.green : '#8fd0ff', 4); A.txt('WC', gx, GY - 17, 15, COL.ink, { lw: 0 });
+    A.blob(cx(2) - 24, GY + ROWS * CS, 48, 26, 4, COL.pink, 4);
+    [[GX - 14, GY + 110], [GX - 14, GY + 300], [GX + COLS * CS, GY + 200]].forEach(([x, y]) => A.blob(x, y, 14, 60, 3, '#c98a5a', 3));
+    // pièges
+    Object.entries(G.traps).forEach(([k, t]) => { const [c, r] = k.split(',').map(Number); if (lit || t.seen) drawTrap(t.k, cx(c), cy(r)); });
+    // le noir
+    if (!lit){
+      ctx.fillStyle = 'rgba(8,6,20,.94)'; ctx.fillRect(-200, -300, 760, 1100);
+      // on devine le damier
+      ctx.strokeStyle = 'rgba(150,140,200,.22)'; ctx.lineWidth = 2;
+      for (let c = 0; c <= COLS; c++){ ctx.beginPath(); ctx.moveTo(GX + c * CS, GY); ctx.lineTo(GX + c * CS, GY + ROWS * CS); ctx.stroke(); }
+      for (let r = 0; r <= ROWS; r++){ ctx.beginPath(); ctx.moveTo(GX, GY + r * CS); ctx.lineTo(GX + COLS * CS, GY + r * CS); ctx.stroke(); }
+      // lueur sous la porte des toilettes
+      const g = ctx.createRadialGradient(gx, GY, 4, gx, GY, 60); g.addColorStop(0, 'rgba(255,230,140,.75)'); g.addColorStop(1, 'rgba(255,230,140,0)');
+      ctx.fillStyle = g; ctx.fillRect(gx - 60, GY - 60, 120, 120);
+      ln([[gx - 22, GY - 1], [gx + 22, GY - 1]], 4, '#ffe08a');
+      // pièges déjà écrasés (on s'en souvient)
+      Object.entries(G.traps).forEach(([k, t]) => { if (!t.seen) return; const [c, r] = k.split(',').map(Number); ctx.save(); ctx.globalAlpha = G.flash > 0 ? 1 : .45; drawTrap(t.k, cx(c), cy(r)); ctx.restore(); });
+      // cases où l'on peut aller
+      [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([dc, dr]) => { const c = G.pos[0] + dc, r = G.pos[1] + dr; if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return;
+        A.rr(GX + c * CS + 6, GY + (ROWS - 1 - r) * CS + 6, CS - 12, CS - 12, 10); ctx.lineWidth = 2.5; ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.stroke(); });
+    }
+    if (G.flash > 0){ ctx.fillStyle = 'rgba(255,255,255,' + G.flash * .5 + ')'; ctx.fillRect(-200, -300, 760, 1100); }
+    drawPlayer(cx(G.pos[0]), cy(G.pos[1]));
+    // la famille réveillée sort des chambres
+    if (G.famille){ G.famille.forEach((p, i) => drawPerson(p, 70 + i * 110, 640, .62, G.t, { expr: p.kind === 'bidou' ? 'grin' : 'sad' })); }
+    // HUD
+    A.bigNum(((G.ms + G.pen) / 1000).toFixed(2).replace('.', ','), 196, 46, 50, { align: 'right' });
+    A.txt('s', 206, 58, 22, COL.white, { lw: 6, align: 'left' });
+    A.txt('Nuit ' + G.nuit + '/' + NUITS.length, 110, 96, 20, COL.white, { lw: 6 });
+    for (let i = 0; i < BRUIT_MAX; i++){ A.blob(196 + i * 34, 84, 28, 24, 6, i < G.bruit ? COL.red : '#4a4060', 3, COL.white); }
+    if (G.phase === 'lumiere' && G.count >= 0){ const k = G.pt / NUITS[G.nuit - 1].vu; A.blob(60, 124, 240, 14, 7, '#fff', 3); A.rr(63, 127, 234 * k, 8, 4); ctx.fillStyle = COL.yellow; ctx.fill(); }
+    if (G.count < 0){ const n = Math.ceil(-G.count / .4), f = (-G.count % .4) / .4;
+      ctx.save(); ctx.translate(180, 380); const s = .7 + f * .6; ctx.scale(s, s); A.bigNum(String(n), 0, 0, 120); ctx.restore(); }
+  }
+
+  // ---------- Toucher : une case voisine ----------
+  function down(p){
+    if (G.phase !== 'noir') return;
+    const c = Math.floor((p.x - GX) / CS), r = ROWS - 1 - Math.floor((p.y - GY) / CS);
+    if (p.x < GX || p.y < GY || p.y > GY + ROWS * CS) return;
+    marche(c, r);
+  }
+
+  // ---------- Vignette ----------
+  function vignette(c, x, y, w, h, t){
+    ctx = c; const k = h / 230;
+    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-150, -230);
+    c.fillStyle = '#d9a46a'; c.fillRect(-200, -50, 700, 400);
+    for (let i = -4; i < 10; i++) ln([[i * 40, -50], [i * 40, 300]], 2, '#b8824a');
+    drawTrap('lego', 90, 80); drawTrap('canard', 210, 60); drawTrap('banane', 230, 170); drawTrap('lego2', 70, 190);
+    const dark = Math.sin(t * 1.5) > 0;
+    if (dark){ c.fillStyle = 'rgba(8,6,20,.9)'; c.fillRect(-200, -50, 700, 400); }
+    drawPlayer(150, 130);
+    if (dark) A.txt('AÏE !', 150, 70, 34, COL.red, { lw: 8 });
+    c.restore();
+  }
+
+  Bourdi.ajouter({
+    id: 'couloir', titre: 'Le Couloir', court: 'Le Couloir',
+    consigne: 'C\'est la nuit, envie pressante ! Retiens bien où sont les pièges pendant que la lumière est allumée, puis touche les cases une par une pour aller jusqu\'aux toilettes sans rien écraser.',
+    plusPetitGagne: true,
+    seuils: { S: 12000, A: 16000, B: 22000, C: 30000, D: 42000 },
+    format: ms => (Math.max(0, ms) / 1000).toFixed(2).replace('.', ',') + ' s',
+    musique: 'jeu',
+    vignette,
+    start(){ ctx = A.ctx(); nouvellePartie(); },
+    update, draw, down,
     etat: () => G
   });
 })();
