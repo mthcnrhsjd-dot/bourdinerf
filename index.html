@@ -1253,10 +1253,14 @@ pseudoShow(scene === 'name');
     else { A.blob(-22, -24, 44, 34, 4, COL.red, 3); ctx.fillStyle = COL.yellow; ctx.fillRect(-4, -24, 8, 34); ctx.fillRect(-22, -11, 44, 8); ell(-8, -28, 8, 5, COL.yellow, 2.5); ell(8, -28, 8, 5, COL.yellow, 2.5); }
     ctx.restore();
   }
+  function orange(x, y, r){ A.circle(x, y, r, COL.orange, 3); ell(x - r * .35, y - r * .35, r * .25, r * .18, 'rgba(255,255,255,.6)', 0); ell(x + r * .3, y - r - 2, r * .45, r * .22, '#3fa535', 2, -.4); }
   function drawPerson(g, x, y, s, t, o = {}){
     ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
     if (o.rot) ctx.rotate(o.rot);
-    const big = g.kind === 'bidou', skin = big ? '#ffb199' : g.skin, face = big ? '#ff5a4a' : g.skin;
+    // Tonton Bidou : une orange dans la bouche ; assis, il la mange… et elle reste coincée
+    const big = g.kind === 'bidou', st = o.sitT != null ? o.sitT : -1, stuck = big && st > 1.2;
+    const skin = big ? '#ffb199' : g.skin, face = big ? (stuck ? (Math.sin(t * 6) > 0 ? '#d42a50' : '#e23a46') : '#ff5a4a') : g.skin;
+    if (stuck) ctx.translate(Math.sin(t * 55) * 1.5, 0);
     const sit = o.sit, bob = o.walk ? Math.abs(Math.sin(t * 10)) * 4 : 0;
     ctx.translate(0, -bob);
     // jambes
@@ -1278,7 +1282,9 @@ pseudoShow(scene === 'name');
       drawGift(g.gift, 0, sh + 34); hand(-24, sh + 40); hand(24, sh + 40);
     } else if (sit){
       ln([[-40, sh + 6], [-56, sh + 30]], 13, COL.ink); ln([[-40, sh + 6], [-56, sh + 30]], 8, g.shirt); hand(-56, sh + 32);
-      ln([[40, sh + 6], [56, sh + 30]], 13, COL.ink); ln([[40, sh + 6], [56, sh + 30]], 8, g.shirt); hand(56, sh + 32);
+      if (big && st >= 0 && st < 1.2){ const k = Math.min(1, st / 1.1), hx = 56 + (12 - 56) * k, hyy = sh + 32 + (sh - 22 - sh - 32) * k;
+        ln([[40, sh + 6], [hx, hyy]], 13, COL.ink); ln([[40, sh + 6], [hx, hyy]], 8, g.shirt); orange(hx, hyy - 6, 10); hand(hx, hyy); }
+      else { ln([[40, sh + 6], [56, sh + 30]], 13, COL.ink); ln([[40, sh + 6], [56, sh + 30]], 8, g.shirt); hand(56, sh + 32); }
     } else {
       // mains vides : il hausse les épaules, paumes ouvertes
       const w = big ? 46 : 26, up = Math.sin(t * 8) * 3;
@@ -1302,7 +1308,12 @@ pseudoShow(scene === 'name');
       ctx.beginPath(); ctx.moveTo(4, hy - hr * .7); ctx.quadraticCurveTo(10, hy - hr * .45, 4, hy - hr * .35); ctx.quadraticCurveTo(-2, hy - hr * .45, 4, hy - hr * .7); ctx.fillStyle = '#9fe3ff'; ctx.fill(); ctx.lineWidth = 2; ctx.stroke();
       A.blob(-14, hy + 12, 28, 6, 3, '#7a3a2a', 0); }
     if (g.style === 'chauve' && !big) A.blob(-14, hy + 11, 28, 6, 3, g.hair, 2);
-    if (expr === 'shock') ell(0, hy + 15, 6, 8, '#7a1f3d', 2.5);
+    if (big && (!sit || stuck)){
+      if (stuck){ ell(-hr * .55, hy + 12, 11, 9, face); ell(hr * .55, hy + 12, 11, 9, face); orange(0, hy + 17, 14);
+        [-1, 1].forEach(d => { const k = (t * 1.5 + (d > 0 ? .5 : 0)) % 1; ctx.save(); ctx.globalAlpha = 1 - k; ell(d * (hr + 6 + k * 10), hy - 10 + k * 20, 3, 5, '#9fe3ff', 1.5); ctx.restore(); }); }
+      else orange(0, hy + 19, 13);
+    }
+    else if (expr === 'shock') ell(0, hy + 15, 6, 8, '#7a1f3d', 2.5);
     else if (expr === 'sad'){ ctx.beginPath(); ctx.arc(0, hy + 21, 8, Math.PI * 1.15, Math.PI * 1.85); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke(); }
     else if (expr === 'grin'){ A.blob(-10, hy + 12, 20, 9, 4, '#fff', 2.5); }
     else { ctx.beginPath(); ctx.arc(0, hy + 9, 9, Math.PI * .15, Math.PI * .85); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke(); }
@@ -1416,11 +1427,13 @@ pseudoShow(scene === 'name');
     // bazar qui tombe / qui disparaît
     G.mess.forEach(m => { if (m.drop > 0) m.drop = Math.max(0, m.drop - dt); if (m.gone >= 0) m.gone += dt; });
     G.mess = G.mess.filter(m => m.gone < .3);
+    // l'orange de Tonton Bidou reste coincée : gloups !
+    G.sofa.forEach(b => { if (!b.gloups && G.t - b.sitT > 1.2){ b.gloups = true; A.tone(0, 420, .25, .12, 'sine', 140); A.tone(.3, 200, .12, .08, 'square', 160); A.tone(.5, 210, .12, .08, 'square', 170); } });
     // invités qui partent
     G.leaving.forEach(l => {
       l.t += dt;
       if (l.st === 'enter'){ l.x -= 170 * dt; }
-      else if (l.st === 'tosofa'){ const k = Math.min(1, l.t / .6); l.x = DX + DW / 2 + (100 - DX - DW / 2) * k; l.y = FLOOR + 8 * k; if (k >= 1){ l.st = 'sofa'; G.sofa.push(l); } }
+      else if (l.st === 'tosofa'){ const k = Math.min(1, l.t / .6); l.x = DX + DW / 2 + (100 - DX - DW / 2) * k; l.y = FLOOR + 8 * k; if (k >= 1){ l.st = 'sofa'; l.sitT = G.t; G.sofa.push(l); } }
     });
     G.leaving = G.leaving.filter(l => !(l.st === 'enter' && l.x < -80) && !(l.st === 'fly' && l.t > .7) && l.st !== 'sofa');
   }
@@ -1469,7 +1482,7 @@ pseudoShow(scene === 'name');
     // invités qui entrent (passent derrière le canapé)
     G.leaving.filter(l => l.st === 'enter').forEach(l => drawPerson(l, l.x, FLOOR, .95, G.t, { walk: true, noGift: false }));
     drawSofa(true);
-    G.sofa.forEach((b, i) => drawPerson(b, 100 + (i ? 40 : 0) - (G.sofa.length > 1 ? 20 : 0), 466, .85, G.t, { sit: true, expr: 'grin' }));
+    G.sofa.forEach((b, i) => { const st = G.t - b.sitT; drawPerson(b, 100 + (i ? 40 : 0) - (G.sofa.length > 1 ? 20 : 0), 466, .85, G.t, { sit: true, sitT: st, expr: st > 1.2 ? 'shock' : 'grin' }); });
     G.leaving.filter(l => l.st === 'tosofa').forEach(l => drawPerson(l, l.x, l.y, .9, G.t, { walk: true, expr: 'grin' }));
     drawSofa(false);
     // bazar
