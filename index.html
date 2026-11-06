@@ -2217,6 +2217,199 @@ pseudoShow(scene === 'name');
 })();
 
 </script>
+<script>
+'use strict';
+// =====================================================================
+//  ÉPREUVE 6 — LE CAFÉ
+//  Garder appuyé pour verser, lâcher pile au trait. Une seule coulée par
+//  tasse, et il tombe encore quelques gouttes après avoir lâché !
+//  6 petites tasses différentes (sans rien d'écrit dessus).
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const { ln, ell } = Bourdi.chats;
+  const CX = 180, BASE = 560;                 // centre et bas de la tasse
+  const DRIP = .045;                          // ce qui coule encore après avoir lâché
+
+  // nom, forme, largeur, hauteur, couleur, temps pour remplir, niveau visé [min, max]
+  const TASSES = [
+    { nom: 'Expresso', forme: 'tasse', w: 64, h: 52, c: COL.white, full: 1.25, cible: [.55, .75] },
+    { nom: 'Ristretto', forme: 'mini', w: 50, h: 40, c: COL.red, full: .85, cible: [.4, .6] },
+    { nom: 'Noisette', forme: 'verre', w: 48, h: 64, c: 'rgba(210,240,255,.55)', full: 1.1, cible: [.5, .8] },
+    { nom: 'Double expresso', forme: 'tasse', w: 76, h: 60, c: COL.yellow, full: 1.5, cible: [.6, .85] },
+    { nom: 'Lungo', forme: 'haute', w: 58, h: 82, c: COL.sky, full: 1.7, cible: [.65, .9] },
+    { nom: 'Cortado', forme: 'verre', w: 56, h: 52, c: 'rgba(210,240,255,.55)', full: .95, cible: [.45, .7] }
+  ];
+  TASSES.forEach(t => { t.w *= 1.6; t.h *= 1.6; });   // de grosses tasses, pour bien voir le trait
+  const P = { parfait: 100 };
+
+  let G;
+  function nouvelleTasse(){
+    const T = TASSES[G.i];
+    G.T = T; G.f = 0; G.drip = 0; G.cible = T.cible[0] + Math.random() * (T.cible[1] - T.cible[0]);
+    G.phase = 'arrive'; G.pt = .4; G.verdict = null; G.spill = 0;
+    A.texte(T.nom, CX, 470, { size: 28, color: COL.white, dur: 1 });
+  }
+  function nouvellePartie(){ G = { t: 0, count: -1.2, score: 0, i: 0, hold: false, end: 0 }; }
+
+  // ---------- Sons ----------
+  let pourNode = 0;
+  const snd = {
+    count(go){ A.tone(0, go ? 1046 : 523, go ? .3 : .12, .08, 'square'); },
+    coule(){ A.bruit(0, .12, .05, 'bandpass', 900 + Math.random() * 300, 3); },
+    pschit(){ A.bruit(0, .25, .12, 'highpass', 3000, 1); A.tone(0, 160, .2, .05, 'sawtooth', 90); },
+    deborde(){ A.bruit(0, .5, .15, 'lowpass', 700, 1); A.tone(0, 300, .4, .08, 'sawtooth', 120); },
+    tchin(){ A.tone(0, 2100, .2, .06, 'triangle'); A.tone(.02, 3150, .15, .03, 'sine'); },
+    glisse(){ A.bruit(0, .3, .05, 'bandpass', 1600, 2, 800); }
+  };
+
+  // ---------- Logique ----------
+  function juger(){
+    const T = G.T, err = Math.abs(G.f - G.cible); let pts, txt, col;
+    if (G.f > 1){ pts = 0; txt = 'Ça déborde !'; col = COL.red; snd.deborde(); A.secousse(6, .3); }
+    else if (err <= .02){ pts = P.parfait; txt = 'Pile poil !'; col = COL.green; A.sons.bien(); snd.tchin(); A.particules(CX, BASE - T.h * G.f, 24, { speed: 260 }); }
+    else { pts = Math.max(0, Math.round(P.parfait * (1 - err / .15))); txt = pts >= 60 ? 'Presque !' : G.f < G.cible ? 'Pas assez !' : 'Trop !'; col = pts >= 60 ? COL.yellow : COL.orange; if (pts < 60) A.sons.erreur(); else snd.tchin(); }
+    G.score += pts; G.verdict = { txt, col, pts }; G.phase = 'verdict'; G.pt = 1.3;
+  }
+  function update(dt){
+    G.t += dt;
+    if (G.count < 0){ const b = Math.ceil(-G.count / .4); G.count += dt; const a = Math.ceil(-G.count / .4); if (a !== b) snd.count(a === 0); if (G.count >= 0){ G.count = 0; nouvelleTasse(); snd.glisse(); } return; }
+    G.pt -= dt;
+    if (G.phase === 'arrive' && G.pt <= 0){ G.phase = 'attente'; }
+    else if (G.phase === 'attente' && G.hold){ G.phase = 'verse'; snd.pschit(); }
+    else if (G.phase === 'verse'){
+      G.f += dt / G.T.full; if (Math.random() < dt * 14) snd.coule();
+      if (!G.hold){ G.phase = 'gouttes'; G.drip = DRIP; }
+      if (G.f > 1.06){ G.phase = 'gouttes'; G.drip = 0; }
+    }
+    else if (G.phase === 'gouttes'){
+      const d = Math.min(G.drip, dt * DRIP / .3); G.f += d; G.drip -= d;
+      if (G.drip <= 1e-4){ juger(); }
+    }
+    else if (G.phase === 'verdict'){
+      if (G.f > 1) G.spill = Math.min(1, G.spill + dt * 3);
+      if (G.pt <= 0){
+        if (G.i >= TASSES.length - 1){ G.phase = 'fin'; G.end = G.t; A.texte('Bon café !', CX, 330, { size: 42, color: COL.yellow, dur: 1.3, vy: 0 }); A.particules(CX, 330, 40, { speed: 340 }); A.sons.bien(); }
+        else { G.i++; nouvelleTasse(); snd.glisse(); }
+      }
+    }
+    else if (G.phase === 'fin' && G.t - G.end > 1.2){ G.phase = 'done'; A.fin({ score: G.score }); }
+  }
+
+  // ---------- Dessin ----------
+  function cupPath(T, x0){
+    const w = T.w, h = T.h, b = BASE - 10, top = b - h;
+    ctx.beginPath();
+    if (T.forme === 'verre'){ ctx.moveTo(x0 - w / 2, top); ctx.lineTo(x0 + w / 2, top); ctx.lineTo(x0 + w * .4, b); ctx.lineTo(x0 - w * .4, b); }
+    else if (T.forme === 'haute'){ ctx.moveTo(x0 - w / 2, top); ctx.lineTo(x0 + w / 2, top); ctx.lineTo(x0 + w / 2, b - 10); ctx.quadraticCurveTo(x0 + w / 2, b, x0 + w / 2 - 10, b); ctx.lineTo(x0 - w / 2 + 10, b); ctx.quadraticCurveTo(x0 - w / 2, b, x0 - w / 2, b - 10); }
+    else { ctx.moveTo(x0 - w / 2, top); ctx.lineTo(x0 + w / 2, top); ctx.bezierCurveTo(x0 + w / 2, b - h * .1, x0 + w * .35, b, x0, b); ctx.bezierCurveTo(x0 - w * .35, b, x0 - w / 2, b - h * .1, x0 - w / 2, top); }
+    ctx.closePath();
+    return { top, b };
+  }
+  function drawCup(T, x0, f, cible, spill){
+    const glass = T.forme === 'verre';
+    // soucoupe
+    ell(x0, BASE - 4, T.w * .85, 9, glass ? '#e9e4f5' : T.c === COL.white ? '#f2eee6' : T.c);
+    // anse
+    if (!glass){ ctx.beginPath(); ctx.ellipse(x0 + T.w / 2 + 6, BASE - 10 - T.h * .55, 12, T.h * .22, 0, -Math.PI / 2, Math.PI / 2); ctx.lineWidth = 10; ctx.strokeStyle = COL.ink; ctx.stroke(); ctx.lineWidth = 5; ctx.strokeStyle = T.c; ctx.stroke(); }
+    const { top, b } = cupPath(T, x0);
+    ctx.fillStyle = glass ? T.c : T.c; ctx.fill();
+    // café (découpé dans la forme de la tasse)
+    ctx.save(); cupPath(T, x0); ctx.clip();
+    const ly = b - (b - top) * Math.min(1, f);
+    if (f > 0){ ctx.fillStyle = '#5b3416'; ctx.fillRect(x0 - 60, ly, 120, b - ly + 2); ctx.fillStyle = '#c98a4b'; ctx.fillRect(x0 - 60, ly, 120, 5); }
+    ctx.restore();
+    cupPath(T, x0); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.lineJoin = 'round'; ctx.stroke();
+    if (!glass){ ctx.save(); cupPath(T, x0); ctx.clip(); ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.fillRect(x0 - T.w / 2 + 6, top + 6, 6, T.h * .5); ctx.restore(); }
+    // le trait à atteindre (pointillés qui dépassent de la tasse)
+    const cy = b - (b - top) * cible;
+    ctx.save(); ctx.setLineDash([7, 6]); ln([[x0 - T.w / 2 - 16, cy], [x0 + T.w / 2 + 16, cy]], 3, COL.pink); ctx.restore();
+    ctx.beginPath(); ctx.moveTo(x0 - T.w / 2 - 28, cy - 8); ctx.lineTo(x0 - T.w / 2 - 16, cy); ctx.lineTo(x0 - T.w / 2 - 28, cy + 8); ctx.closePath(); ctx.fillStyle = COL.pink; ctx.fill();
+    // ça déborde : flaque
+    if (spill > 0){ ell(x0, BASE + 2, T.w * .9 * spill + 10, 8 * spill + 2, '#5b3416', 2); for (let i = -1; i <= 1; i += 2) A.blob(x0 + i * T.w / 2 - 4, top, 8, (b - top) * spill, 4, '#5b3416', 0); }
+  }
+  function drawMachine(){
+    // machine à expresso
+    A.blob(70, 150, 220, 170, 26, '#c9c3d9', 5);
+    A.blob(84, 164, 192, 60, 16, '#e9e4f5', 3);
+    A.circle(122, 194, 16, '#fff', 3); ln([[122, 194], [122 + Math.cos(G.t * 2) * 10, 194 + Math.sin(G.t * 2) * 10]], 3, COL.red);
+    A.blob(214, 182, 46, 26, 8, G.phase === 'verse' ? COL.green : COL.violet, 3);
+    // tête + bec
+    A.blob(140, 300, 80, 30, 8, '#4a4060', 4); A.blob(166, 326, 28, 18, 5, '#2f2a3d', 3);
+    ln([[200, 312], [262, 296]], 10, COL.ink); ln([[200, 312], [262, 296]], 5, '#8a5222');
+  }
+  function draw(){
+    ctx = A.ctx();
+    // cuisine
+    ctx.fillStyle = '#fff1d6'; ctx.fillRect(-200, -300, 760, 1100);
+    for (let y = 120; y < 600; y += 40) for (let x = -200; x < 560; x += 40) if (((x + y) / 40) % 2 === 0){ ctx.fillStyle = '#ffe2b3'; ctx.fillRect(x, y, 40, 40); }
+    ctx.fillStyle = '#8a5a3a'; ctx.fillRect(-200, BASE + 6, 760, 30); ln([[-200, BASE + 6], [560, BASE + 6]], 5, COL.ink);
+    ctx.fillStyle = '#6a4228'; ctx.fillRect(-200, BASE + 36, 760, 400);
+    drawMachine();
+    const T = G.T;
+    if (T){
+      const slide = G.phase === 'arrive' ? (G.pt / .4) * 300 : 0;
+      // filet de café
+      if (G.phase === 'verse' || (G.phase === 'gouttes' && G.drip > 0)){
+        const { top, b } = { top: BASE - 10 - T.h, b: BASE - 10 }, ly = b - (b - top) * Math.min(1, G.f);
+        const w = G.phase === 'verse' ? 7 : 3;
+        ln([[CX, 344], [CX, ly]], w + 3, '#3a1f0a'); ln([[CX, 344], [CX, ly]], w, '#7a4a22');
+      }
+      drawCup(T, CX + slide, G.f, G.cible, G.spill);
+      if (G.verdict){
+        A.blob(30, 610, 300, 70, 18, '#fff', 4);
+        A.txt(G.verdict.txt, CX, 634, 26, G.verdict.col, { lw: 6 });
+        A.txt('+' + G.verdict.pts, CX, 664, 20, COL.violet, { lw: 0 });
+      } else if (G.phase === 'attente' || G.phase === 'verse'){
+        const held = G.hold, dy = held ? 4 : 0;
+        A.rr(30, 616, 300, 70, 24); ctx.fillStyle = '#000'; ctx.fill();
+        A.blob(30, 610 + dy, 300, 70, 24, held ? COL.green : '#8a5222', 4, '#000');
+        A.rr(40, 616 + dy, 280, 20, 12); ctx.fillStyle = 'rgba(255,255,255,.3)'; ctx.fill();
+        A.txt('VERSER', CX, 646 + dy, 34, COL.white, { lw: 8 });
+      }
+    }
+    // HUD
+    A.bigNum(String(G.score), 168, 46, 50, { align: 'right' });
+    A.txt('pts', 178, 58, 22, COL.white, { lw: 6, align: 'left' });
+    A.txt('Tasse ' + Math.min(G.i + 1, TASSES.length) + '/' + TASSES.length, 150, 96, 20, COL.white, { lw: 6 });
+    if (G.count < 0){ const n = Math.ceil(-G.count / .4), f = (-G.count % .4) / .4;
+      ctx.save(); ctx.translate(180, 420); const s = .7 + f * .6; ctx.scale(s, s); A.bigNum(String(n), 0, 0, 120); ctx.restore(); }
+  }
+
+  // ---------- Toucher : garder appuyé n'importe où sous la machine ----------
+  const ids = new Set();
+  function down(p, id){ if (p.y > 340){ ids.add(id); G.hold = true; } }
+  function up(p, id){ if (id === 'all') ids.clear(); else ids.delete(id); G.hold = ids.size > 0; }
+
+  // ---------- Vignette ----------
+  // la vignette dessine la tasse à BASE = 560 : on la remonte
+  function vignette(c, x, y, w, h, t){
+    ctx = c; const k = h / 230;
+    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-150, -230);
+    c.fillStyle = '#fff1d6'; c.fillRect(-200, -50, 700, 400); c.fillStyle = '#8a5a3a'; c.fillRect(-200, 196, 700, 100); ln([[-200, 196], [500, 196]], 4, COL.ink);
+    A.blob(80, -20, 140, 110, 20, '#c9c3d9', 5); A.blob(126, 84, 48, 20, 5, '#2f2a3d', 3);
+    const f = (t * .35) % 1;
+    c.save(); c.translate(0, 196 - BASE); ln([[150, 104 - 196 + BASE], [150, BASE - 10 - 52 * 1.6 * f]], 6, '#7a4a22');
+     drawCup(TASSES[0], 150, f, .7, 0); c.restore();
+    c.restore();
+  }
+
+  Bourdi.ajouter({
+    id: 'cafe', titre: 'Le Café', court: 'Le Café',
+    consigne: 'Garde le doigt appuyé pour verser le café, et lâche pile au trait rose ! Une seule coulée par tasse, et attention : il tombe encore quelques gouttes après.',
+    plusPetitGagne: false,
+    seuils: { S: 560, A: 480, B: 380, C: 270, D: 150 },
+    format: n => Math.max(0, Math.round(n)) + ' pts',
+    musique: 'jeu',
+    vignette,
+    start(){ ctx = A.ctx(); ids.clear(); nouvellePartie(); },
+    update, draw, down, up,
+    etat: () => G
+  });
+})();
+
+</script>
 <!-- FIN -->
 <script>Bourdi.demarrer();</script>
 
