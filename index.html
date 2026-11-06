@@ -416,7 +416,7 @@ function finish(res){
 
 // ---------- Classement entre amis (Google Apps Script) ----------
 // Les scores ne partent que depuis le vrai site : jamais depuis un test sur l'ordinateur ni depuis l'artifact.
-const LB_URL = '';
+const LB_URL = 'https://script.google.com/macros/s/AKfycbyDoxK2r0sxeqL0tGhrGzzh9L162N48JmpAW9tpj_JnxxCSTvJV8qUDjfQxwFdd7lI2/exec';
 const LB_ON = /\.github\.io$/.test(location.hostname) && LB_URL.startsWith('https') && !SAVE.test;
 let lbData = null, lbState = 'idle', boardTab = 0;
 function lbSend(){
