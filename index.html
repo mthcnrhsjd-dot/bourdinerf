@@ -3446,6 +3446,322 @@ pseudoShow(scene === 'name');
 })();
 
 </script>
+<script>
+'use strict';
+// =====================================================================
+//  ÉPREUVE 13 — TALALCOQ
+//  Empiler les bûches sur la remorque du tracteur, le plus haut et le plus
+//  droit possible. La bûche va et vient : toucher = la lâcher. La pile
+//  penche si c'est de travers ; trop penchée, elle s'écroule (fin).
+//  « Parfait ! » d'affilée = la pile se redresse. Bûche dorée = ×3.
+//  Plus haut : coups de vent. Score = nombre de bûches (bonus compris).
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const { ln, ell } = Bourdi.chats;
+  const LW = 112, LH = 28, BASE = 600, CX = 196;          // bûche, haut de la remorque, centre de la remorque
+  const PENCHE_MAX = LW * .5;                               // le centre de la pile dépasse le bord : tout s'écroule
+
+  let G;
+  function nouvellePartie(){
+    G = { t: 0, count: -1.2, score: 0, logs: [], cur: null, fall: null, cam: 0, end: 0, combo: 0, collapse: null, vent: 0, ventT: 3 };
+    nouvelleBuche();
+  }
+  const top = () => BASE - G.logs.length * LH;
+  // vraie stabilité : pour chaque bûche, le centre de tout ce qui est posé dessus doit rester au-dessus d'elle.
+  // penche() renvoie le pire écart (signé), en pixels ; au-delà de PENCHE_MAX, ça s'écroule.
+  function penche(){
+    const L = G.logs; let pire = 0, sum = 0, n = 0;
+    for (let i = L.length - 1; i > 0; i--){ sum += L[i].x; n++; const d = sum / n - L[i - 1].x; if (Math.abs(d) > Math.abs(pire)) pire = d; }
+    return pire;
+  }
+  function nouvelleBuche(){
+    const n = G.logs.length, dore = n > 3 && Math.random() < .13;
+    G.cur = { x: Math.random() < .5 ? 50 : 310, dir: Math.random() < .5 ? 1 : -1, v: 170 + Math.min(330, n * 11), dore };
+  }
+
+  const snd = {
+    count(go){ A.tone(0, go ? 1046 : 523, go ? .3 : .12, .08, 'square'); },
+    pose(n){ A.bruit(0, .1, .25, 'lowpass', 500, 1); A.tone(0, 140 + n * 3, .12, .14, 'sine', 90); },
+    parfait(c){ A.tone(0, 660 + c * 60, .12, .08, 'triangle'); A.tone(.08, 990 + c * 80, .14, .06, 'triangle'); },
+    dore(){ [0, .07, .14].forEach((d, i) => A.tone(d, 1200 + i * 300, .15, .06, 'triangle')); },
+    craque(){ A.bruit(0, .9, .3, 'lowpass', 400, 1); for (let i = 0; i < 6; i++) A.bruit(.1 + i * .1, .15, .2, 'bandpass', 300 + i * 80, 2); },
+    vent(){ A.bruit(0, 1.2, .08, 'bandpass', 500, 1, 1400); }
+  };
+
+  function lache(){
+    const c = G.cur; if (!c || G.fall) return;
+    G.fall = { x: c.x, y: top() - 150, vy: 0, dore: c.dore }; G.cur = null;
+  }
+  function atterrit(f){
+    const prev = G.logs.length ? G.logs[G.logs.length - 1].x : CX;
+    let x = f.x, d = x - prev;
+    if (Math.abs(d) > LW * .72){ ecroule(f); return; }                      // complètement à côté : tout tombe
+    if (Math.abs(d) < 7){ x = prev; G.combo++; snd.parfait(G.combo); A.dire('Parfait !'); A.texte('Parfait !', CX, top() - 60 - G.cam, { size: 26, color: COL.green, dur: .7 });
+      if (G.combo >= 3){ G.logs.forEach(l => { l.x += (CX - l.x) * .35; }); A.particules(CX, top() - G.cam, 12, { speed: 200 }); } }
+    else G.combo = 0;
+    G.logs.push({ x, dore: f.dore, rot: (Math.random() - .5) * .04 });
+    G.score += f.dore ? 3 : 1; snd.pose(G.logs.length); A.secousse(2, .08);
+    if (f.dore){ snd.dore(); A.texte('Bûche dorée !', CX, top() - 40 - G.cam, { size: 26, color: COL.yellow, dur: .9 }); }
+    if (Math.abs(penche()) > PENCHE_MAX){ ecroule(null); return; }
+    nouvelleBuche();
+  }
+  function ecroule(f){
+    const logs = G.logs.map((l, i) => ({ x: l.x, y: BASE - (i + 1) * LH, vx: (Math.random() - .5) * 300 + Math.sign(penche() || 1) * 120, vy: -Math.random() * 300, r: 0, vr: (Math.random() - .5) * 8, dore: l.dore }));
+    if (f) logs.push({ x: f.x, y: f.y, vx: (f.x - CX) * 2, vy: 0, r: 0, vr: 4, dore: f.dore });
+    G.collapse = logs; G.logs = []; G.cur = null; G.end = G.t;
+    snd.craque(); A.secousse(14, .6);
+    A.texte('Oh non ! Comment on va livrer Talalcoq ?', 180, 300, { size: 22, color: COL.red, dur: 2, vy: 0 });
+  }
+  function update(dt){
+    G.t += dt;
+    if (G.count < 0){ const b = Math.ceil(-G.count / .4); G.count += dt; const a = Math.ceil(-G.count / .4); if (a !== b) snd.count(a === 0); if (G.count >= 0) G.count = 0; return; }
+    if (G.end){
+      G.collapse.forEach(l => { l.vy += 900 * dt; l.x += l.vx * dt; l.y += l.vy * dt; l.r += l.vr * dt; if (l.y > BASE + 40){ l.y = BASE + 40; l.vy *= -.3; l.vx *= .7; } });
+      if (G.end > 0 && G.t - G.end > 2.2){ G.end = -1; A.fin({ score: G.score }); }
+      return;
+    }
+    // coups de vent (plus haut que 15 bûches)
+    if (G.logs.length > 15){ G.ventT -= dt; if (G.ventT <= 0){ G.vent = (Math.random() < .5 ? -1 : 1) * (60 + Math.random() * 80); G.ventT = 3 + Math.random() * 3; snd.vent(); } }
+    G.vent *= Math.pow(.4, dt);
+    const c = G.cur;
+    if (c){ c.x += (c.dir * c.v + G.vent) * dt; if (c.x > 320){ c.x = 320; c.dir = -1; } if (c.x < 40){ c.x = 40; c.dir = 1; } }
+    const f = G.fall;
+    if (f){ f.vy += 2200 * dt; f.y += f.vy * dt; if (f.y >= top() - LH){ G.fall = null; atterrit(f); } }
+    // la caméra suit la tour
+    const want = Math.max(0, G.logs.length * LH - 300);
+    G.cam += (want - G.cam) * Math.min(1, dt * 4);
+  }
+
+  // ---------- Dessin ----------
+  function buche(x, y, dore, r = 0){
+    ctx.save(); ctx.translate(x, y); ctx.rotate(r);
+    A.blob(-LW / 2, -LH / 2, LW, LH, 12, dore ? '#ffcf3a' : '#a0622e', 3.5);
+    ln([[-LW / 2 + 16, -4], [LW / 2 - 24, -6]], 2.5, dore ? '#e0a400' : '#7a4418'); ln([[-LW / 2 + 26, 5], [LW / 2 - 16, 4]], 2.5, dore ? '#e0a400' : '#7a4418');
+    A.circle(LW / 2 - 10, 0, LH / 2 - 2, dore ? '#fff0a8' : '#e8b878', 3); A.circle(LW / 2 - 10, 0, 5, null, 2, dore ? '#e0a400' : '#b8824a');
+    if (dore && Math.sin(G.t * 8 + x) > .6) A.star(-LW / 4, -LH / 2 - 4, 7, '#fff', 2);
+    ctx.restore();
+  }
+  function draw(){
+    ctx = A.ctx();
+    // ciel et forêt (défilent un peu moins vite que la tour)
+    const g = ctx.createLinearGradient(0, -300, 0, 700); g.addColorStop(0, '#5ec8ff'); g.addColorStop(1, '#d6f5ff');
+    ctx.fillStyle = g; ctx.fillRect(-200, -300, 760, 1100);
+    ctx.save(); ctx.translate(0, G.cam * .4);
+    for (let i = 0; i < 9; i++){ const x = i * 48 - 20, h = 120 + (i * 37) % 60;
+      ctx.beginPath(); ctx.moveTo(x, 560 - h); ctx.lineTo(x + 36, 560); ctx.lineTo(x - 36, 560); ctx.closePath(); ctx.fillStyle = i % 2 ? '#2f8f3a' : '#3fa535'; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.stroke(); }
+    ctx.restore();
+    ctx.save(); ctx.translate(0, G.cam);
+    // sol, tracteur et remorque
+    ctx.fillStyle = '#7ab84a'; ctx.fillRect(-200, BASE + 46, 760, 400); ln([[-200, BASE + 46], [560, BASE + 46]], 4, COL.ink);
+    A.blob(96, BASE, 200, 22, 4, '#8a5a3a', 4);                                                          // plateau de la remorque
+    [[120, BASE + 30], [270, BASE + 30]].forEach(([x, y]) => { A.circle(x, y, 18, '#2f2a3d', 4); A.circle(x, y, 7, '#c9c3d9', 3); });
+    ln([[96, BASE + 12], [60, BASE + 16]], 6, COL.ink);
+    A.blob(-30, BASE - 40, 92, 62, 10, COL.red, 4); A.blob(0, BASE - 92, 54, 56, 8, '#bfeaff', 4); A.blob(-6, BASE - 98, 66, 12, 4, COL.red, 3);  // tracteur
+    A.circle(36, BASE + 26, 26, '#2f2a3d', 4); A.circle(36, BASE + 26, 10, COL.yellow, 3); A.circle(-12, BASE + 34, 14, '#2f2a3d', 4);
+    ctx.restore();
+    // la pile (elle se balance si elle penche)
+    const p = penche(), sway = Math.sin(G.t * 3) * Math.min(1, Math.abs(p) / PENCHE_MAX) * .02;
+    ctx.save(); ctx.translate(CX, BASE + G.cam); ctx.rotate(sway + p / PENCHE_MAX * .04); ctx.translate(-CX, -(BASE + G.cam));
+    G.logs.forEach((l, i) => buche(l.x, BASE - i * LH - LH / 2 + G.cam, l.dore, l.rot));
+    ctx.restore();
+    if (G.collapse) G.collapse.forEach(l => buche(l.x, l.y + G.cam, l.dore, l.r));
+    // la bûche qui va et vient, et celle qui tombe
+    if (G.cur){ const y = top() - 150 + G.cam; ln([[G.cur.x, y - 60], [G.cur.x, y - LH / 2]], 3, '#5b3a29'); buche(G.cur.x, y, G.cur.dore); }
+    if (G.fall) buche(G.fall.x, G.fall.y + G.cam, G.fall.dore);
+    if (Math.abs(G.vent) > 20){ for (let i = 0; i < 4; i++){ const y = 200 + i * 60, x = ((G.t * 400 * Math.sign(G.vent)) + i * 97) % 420 - 30; ln([[x, y], [x + 40 * Math.sign(G.vent), y]], 3, 'rgba(255,255,255,.8)'); } }
+    // indicateur de penchant
+    const k = Math.min(1, Math.abs(p) / PENCHE_MAX);
+    A.blob(30, 120, 300, 16, 8, '#fff', 3); A.rr(180 + Math.min(0, p / PENCHE_MAX * 146), 123, Math.abs(p / PENCHE_MAX) * 146, 10, 5); ctx.fillStyle = k > .7 ? COL.red : k > .4 ? COL.orange : COL.green; ctx.fill();
+    ln([[180, 116], [180, 140]], 3, COL.ink);
+    // HUD
+    A.bigNum(String(G.score), 168, 46, 50, { align: 'right' });
+    A.txt('bûches', 178, 58, 22, COL.white, { lw: 6, align: 'left' });
+    if (G.count < 0){ const n = Math.ceil(-G.count / .4), fr = (-G.count % .4) / .4;
+      ctx.save(); ctx.translate(180, 330); const s = .7 + fr * .6; ctx.scale(s, s); A.bigNum(String(n), 0, 0, 120); ctx.restore(); }
+  }
+  function down(){ if (G.count >= 0 && !G.end) lache(); }
+  function vignette(c, x, y, w, h, t){
+    ctx = c; const k = h / 230;
+    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-150, -230);
+    c.fillStyle = '#9fdcff'; c.fillRect(-200, -50, 700, 400);
+    const save = G; G = { t };
+    c.save(); c.translate(0, -390); c.scale(1, 1);
+    for (let i = 0; i < 6; i++) buche(150 + Math.sin(i * 1.7) * 10, BASE - i * LH - LH / 2, i === 3);
+    buche(150 + Math.sin(t * 2) * 70, BASE - 7 * LH - 40, false);
+    A.blob(50, BASE, 200, 22, 4, '#8a5a3a', 4);
+    c.restore(); G = save;
+    c.restore();
+  }
+  Bourdi.ajouter({
+    id: 'talalcoq', titre: 'Talalcoq', court: 'Talalcoq',
+    consigne: 'Touche l\'écran pour lâcher la bûche. Empile-les bien droit, le plus haut possible, sans tout faire tomber !',
+    plusPetitGagne: false,
+    seuils: { S: 80, A: 55, B: 38, C: 22, D: 10 },
+    format: n => Math.max(0, Math.round(n)) + ' bûches',
+    musique: 'jeu', vignette,
+    start(){ ctx = A.ctx(); nouvellePartie(); },
+    update, draw, down, etat: () => G
+  });
+})();
+
+</script>
+<script>
+'use strict';
+// =====================================================================
+//  ÉPREUVE 14 — L'ÉTERNURLEMENT
+//  Elle a le nez qui chatouille… 1) toucher la jauge de force au plus
+//  haut, 2) toucher l'aiguille pile au centre. Puis elle éternue EN
+//  HURLANT : plus c'est réussi, plus c'est fort (décibels), et plus les
+//  gens derrière s'énervent. 3 éternuements, score = total des décibels.
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const { LOOKS, drawCat, ln, ell } = Bourdi.chats;
+  const { drawPerson, makePerson } = Bourdi.persos;
+  const MANCHES = 3, X = 180, Y = 560, S = 1.35;          // elle : pieds en (X, Y), échelle S
+
+  let G;
+  function elle(){ return { kind: 'empty', skin: '#f2c294', hair: '#4a2c1a', shirt: COL.pink, pants: '#3a4a8a', style: 'frange' }; }
+  function nouvelleManche(){
+    G.phase = 'force'; G.u = 0; G.vit = 1.1 + G.m * .35; G.force = 0; G.prec = 0; G.k = 0; G.pt = 0;
+    G.ah = 0; A.texte('Ah… Ah… Ah…', X, 210, { size: 30, color: COL.white, dur: 1.2 });
+  }
+  function nouvellePartie(){
+    G = { t: 0, count: -1.2, score: 0, m: 1, end: 0, fond: [makePerson('empty'), makePerson('empty'), makePerson('bidou')], cadres: [0, 0], chats: [], colere: 0 };
+    G.fond[0].p = 0; nouvelleManche();
+  }
+
+  // ---------- Sons ----------
+  const snd = {
+    count(go){ A.tone(0, go ? 1046 : 523, go ? .3 : .12, .08, 'square'); },
+    ah(n){ A.tone(0, 300 + n * 60, .25, .05, 'sine', 360 + n * 60); },
+    clic(){ A.tone(0, 1400, .05, .06, 'square'); },
+    // l'éternuement qui hurle : un « AAAA » qui monte puis le « TCHOUM »
+    hurle(k){ const v = .05 + k * .25;
+      A.tone(0, 300, .35 + k * .3, v, 'sawtooth', 700 + k * 600); A.tone(0, 450, .35 + k * .3, v * .6, 'square', 1000 + k * 800);
+      A.bruit(.3 + k * .25, .5 + k * .4, .1 + k * .45, 'bandpass', 2500, .8, 600); A.tone(.3 + k * .25, 180, .4, v, 'sawtooth', 90); },
+    grogne(){ A.tone(0, 140, .4, .08, 'sawtooth', 110); A.tone(.15, 120, .4, .07, 'sawtooth', 95); }
+  };
+
+  function update(dt){
+    G.t += dt;
+    if (G.count < 0){ const b = Math.ceil(-G.count / .4); G.count += dt; const a = Math.ceil(-G.count / .4); if (a !== b) snd.count(a === 0); if (G.count >= 0) G.count = 0; return; }
+    G.cadres = G.cadres.map(c => c > 0 ? Math.min(1, c + dt * 3) : 0);
+    G.chats.forEach(c => { c.t += dt; c.x += c.vx * dt; c.y += c.vy * dt; c.vy += 500 * dt; });
+    G.colere = Math.max(0, G.colere - dt * .25);
+    if (G.phase === 'force'){ G.u += dt * G.vit; G.ah += dt; if (G.ah > .45){ G.ah = 0; snd.ah(Math.floor(G.u * 2) % 3); } }
+    else if (G.phase === 'precision'){ G.u += dt * (G.vit + .3); }
+    else if (G.phase === 'atchoum'){ G.pt -= dt;
+      if (G.pt <= 0){
+        if (G.m >= MANCHES){ G.phase = 'fin'; G.end = G.t; A.texte('À vos souhaits !', 180, 300, { size: 38, color: COL.yellow, dur: 1.4, vy: 0 }); A.sons.bien(); A.particules(180, 300, 40, { speed: 340 }); }
+        else { G.m++; nouvelleManche(); }
+      } }
+    else if (G.phase === 'fin' && G.t - G.end > 1.4){ G.phase = 'done'; A.fin({ score: G.score }); }
+  }
+  // jauge de force : monte et descend (0 → 1 → 0) ; aiguille de précision : va et vient
+  const forceNow = () => 1 - Math.abs(((G.u % 2) + 2) % 2 - 1);
+  const aiguille = () => 1 - Math.abs(((G.u % 2) + 2) % 2 - 1);
+  function touche(){
+    if (G.phase === 'force'){ G.force = forceNow(); G.phase = 'precision'; G.u = Math.random() * 2; snd.clic(); }
+    else if (G.phase === 'precision'){
+      G.prec = 1 - Math.min(1, Math.abs(aiguille() - .5) * 2); snd.clic();
+      const k = G.force * (.35 + .65 * G.prec);                                  // 0 … 1
+      const db = Math.round(45 + k * 80); G.k = k; G.db = db; G.score += db; G.phase = 'atchoum'; G.pt = 2.0;
+      snd.hurle(k); A.secousse(4 + k * 22, .3 + k * .6);
+      if (k >= .85) A.texte('AAAATCHOUUUUM !!!', 180, 250, { size: 34, color: COL.red, dur: 1.5, vy: -20 });
+      else A.texte('atchoum', 180, 250, { size: 18 + k * 26, color: COL.white, dur: 1.2 });
+      A.particules(X + 10, Y - 220, Math.round(10 + k * 50), { speed: 200 + k * 400, colors: ['#bfeaff', '#ffffff', '#d6f5ff'], up: 100 });
+      if (k > .55){ G.colere = 1; setTimeout(snd.grogne, 700); }
+      if (k > .6){ G.cadres = G.cadres.map((c, i) => c || (k > .75 || i === 0 ? .01 : 0)); }
+      if (k > .75){ [LOOKS.brabus, LOOKS.winkle].forEach((L, i) => G.chats.push({ L, x: i ? 300 : 60, y: 520, vx: i ? 160 : -160, vy: -520 - k * 200, t: 0 })); }
+    }
+  }
+
+  // ---------- Dessin ----------
+  function draw(){
+    ctx = A.ctx();
+    ctx.fillStyle = '#ffe9f2'; ctx.fillRect(-200, -300, 760, 1100);
+    for (let x = -200; x < 560; x += 46){ ctx.fillStyle = '#ffd8e8'; ctx.fillRect(x, -300, 22, 790); }
+    ctx.fillStyle = '#c98a5a'; ctx.fillRect(-200, 490, 760, 400); ln([[-200, 490], [560, 490]], 5, COL.ink);
+    // cadres au mur (tombent si c'est trop fort)
+    [[50, 170], [262, 160]].forEach(([x, y], i) => { const f = G.cadres[i], fy = y + f * 300, r = f * (i ? .9 : -.7);
+      ctx.save(); ctx.translate(x + 24, fy + 20); ctx.rotate(r); A.blob(-24, -20, 48, 40, 4, COL.yellow, 4); A.blob(-17, -13, 34, 26, 2, '#8fd7ff', 2); ctx.restore(); });
+    // les gens en arrière-plan, sur le canapé
+    A.blob(-10, 380, 380, 70, 20, '#5a8ad8', 4);
+    G.fond.forEach((p, i) => { const x = 40 + i * 140, y = 470;
+      drawPerson(p, x, y, .55, G.t, { sit: true, expr: G.colere > .3 ? 'shock' : 'smile' });
+      if (G.colere > .3){ ctx.save(); ctx.globalAlpha = Math.min(1, G.colere * 2); A.txt('#@!', x + 26, 350 + Math.sin(G.t * 10 + i) * 3, 18, COL.red, { lw: 4 }); ctx.restore(); } });
+    A.blob(-20, 430, 400, 40, 14, '#4a76c8', 4);
+    // elle, au premier plan
+    const k = G.phase === 'atchoum' ? G.k : 0, tremble = G.phase === 'atchoum' ? Math.sin(G.t * 60) * k * 4 : 0;
+    const recule = G.phase === 'force' || G.phase === 'precision' ? -.12 : G.phase === 'atchoum' ? .15 * k : 0;
+    ctx.save(); ctx.translate(X + tremble, Y); ctx.rotate(recule); ctx.translate(-X, -Y);
+    drawPerson(elle(), X, Y, S, G.t, { expr: G.phase === 'atchoum' ? 'sleep' : 'shock' });
+    // la bouche grande ouverte qui hurle + le nez qui chatouille
+    const hy = Y + (-56 - 98) * S;
+    if (G.phase === 'atchoum'){ const m = 8 + k * 16; ell(X, hy + 22 * S, m * 1.2, m * 1.5, '#7a1f3d', 3); ell(X, hy + 22 * S + m * .6, m * .7, m * .5, '#ff7aa8', 0); }
+    else { ell(X + 2, hy + 6 * S, 6, 4, '#ff7a7a', 0); }
+    ctx.restore();
+    // les chats qui s'envolent
+    G.chats.forEach(c => { if (c.t < 2) drawCat(c.L, c.x, c.y, .9, 'fly', G.t, { rot: c.t * 8 }); });
+    // les jauges
+    if (G.phase === 'force' || G.phase === 'precision'){
+      // force (verticale, à droite)
+      const f = G.phase === 'force' ? forceNow() : G.force;
+      A.blob(318, 170, 30, 220, 12, '#fff', 4);
+      const gr = ctx.createLinearGradient(0, 386, 0, 174); gr.addColorStop(0, COL.green); gr.addColorStop(.6, COL.yellow); gr.addColorStop(1, COL.red);
+      A.rr(322, 386 - 212 * f, 22, 212 * f, 9); ctx.fillStyle = gr; ctx.fill();
+      A.txt('💪', 333, 156, 20, COL.white, { lw: 0 });
+    }
+    if (G.phase === 'precision'){
+      A.blob(30, 610, 300, 30, 15, '#fff', 4);
+      A.rr(160, 613, 40, 24, 8); ctx.fillStyle = COL.green; ctx.fill(); A.rr(120, 613, 40, 24, 8); ctx.fillStyle = 'rgba(255,210,31,.6)'; ctx.fill(); A.rr(200, 613, 40, 24, 8); ctx.fill();
+      const ax = 34 + aiguille() * 292; ln([[ax, 602], [ax, 648]], 6, COL.ink); ln([[ax, 602], [ax, 648]], 3, COL.white);
+      A.txt('🎯', 180, 668, 20, COL.white, { lw: 0 });
+    }
+    // sonomètre
+    if (G.phase === 'atchoum' || G.phase === 'fin'){
+      const v = Math.min(1, (G.k || 0) * Math.min(1, (2 - G.pt) * 3));
+      A.blob(110, 600, 140, 86, 16, '#2f2a3d', 4, COL.white);
+      for (let i = 0; i <= 8; i++){ const a = Math.PI + i * Math.PI / 8; ln([[180 + Math.cos(a) * 52, 668 + Math.sin(a) * 52], [180 + Math.cos(a) * 60, 668 + Math.sin(a) * 60]], 3, i > 6 ? COL.red : COL.white); }
+      const a = Math.PI + v * Math.PI; ln([[180, 668], [180 + Math.cos(a) * 50, 668 + Math.sin(a) * 50]], 4, COL.yellow);
+      A.txt((G.db || 0) + ' dB', 180, 646, 16, COL.white, { lw: 0 });
+    }
+    // HUD
+    A.bigNum(String(G.score), 168, 46, 50, { align: 'right' });
+    A.txt('dB', 178, 58, 22, COL.white, { lw: 6, align: 'left' });
+    A.txt('Éternuement ' + Math.min(G.m, MANCHES) + '/' + MANCHES, 150, 96, 20, COL.white, { lw: 6 });
+    if (G.count < 0){ const n = Math.ceil(-G.count / .4), fr = (-G.count % .4) / .4;
+      ctx.save(); ctx.translate(180, 300); const s = .7 + fr * .6; ctx.scale(s, s); A.bigNum(String(n), 0, 0, 120); ctx.restore(); }
+  }
+  function down(){ if (G.count >= 0) touche(); }
+  function vignette(c, x, y, w, h, t){
+    ctx = c; const k = h / 230;
+    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-150, -230);
+    c.fillStyle = '#ffe9f2'; c.fillRect(-200, -50, 700, 400);
+    const save = G; G = { t };
+    drawPerson(elle(), 150, 300, 1.2, t, { expr: 'sleep' });
+    const hy = 300 + (-56 - 98) * 1.2; ell(150, hy + 26, 16, 20, '#7a1f3d', 3);
+    G = save;
+    A.txt('ATCHOUM !', 150 + Math.sin(t * 30) * 2, 30, 34, COL.red, { lw: 8 });
+    c.restore();
+  }
+  Bourdi.ajouter({
+    id: 'eternurlement', titre: 'L\'Éternurlement', court: 'Éternurlement',
+    consigne: 'Touche au bon moment pour un éternuement le plus fort possible : d\'abord la force, puis la précision !',
+    plusPetitGagne: false,
+    seuils: { S: 360, A: 340, B: 315, C: 285, D: 240 },
+    format: n => Math.max(0, Math.round(n)) + ' dB',
+    musique: 'jeu', vignette,
+    start(){ ctx = A.ctx(); nouvellePartie(); },
+    update, draw, down, etat: () => G
+  });
+})();
+
+</script>
 <!-- FIN -->
 <script>Bourdi.demarrer();</script>
 
