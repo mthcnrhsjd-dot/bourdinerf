@@ -56,7 +56,8 @@ document.body.appendChild(safeProbe);
 function resize(){
   dpr = Math.min(window.devicePixelRatio || 1, 3);
   const w = innerWidth, h = innerHeight, cs = getComputedStyle(safeProbe);
-  const st = parseFloat(cs.paddingTop) || 0, sb = parseFloat(cs.paddingBottom) || 0, ah = h - st - sb;
+  // en haut : au moins 48 px libres sur téléphone, même quand l'iPhone ne donne pas la taille de sa barre (app Claude)
+  const st = Math.max(parseFloat(cs.paddingTop) || 0, h > 600 && w < 700 ? 48 : 0), sb = parseFloat(cs.paddingBottom) || 0, ah = h - st - sb;
   cvs.width = Math.round(w * dpr); cvs.height = Math.round(h * dpr);
   // le jeu est calé en BAS de l'écran : toute la place libre va en haut, sous la barre de l'iPhone
   // (dans l'app Claude, la page est dans un cadre où l'iPhone ne donne pas la taille de sa barre)
