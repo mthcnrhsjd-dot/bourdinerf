@@ -3480,7 +3480,7 @@ pseudoShow(scene === 'name');
 //  ÉPREUVE 13 — TALALCOQ
 //  Empiler les bûches sur la remorque du tracteur, le plus haut et le plus
 //  droit possible. La grue forestière promène la bûche : toucher = la lâcher.
-//  Une bûche ratée tombe toute seule (3 ratées = fin). Si la pile penche
+//  Une bûche ratée (complètement à côté) = fin. Si la pile penche
 //  trop, elle s'écroule (fin). « Parfait ! » ×3 d'affilée = la pile se
 //  redresse. Bûche dorée = ×3. Plus haut : coups de vent.
 //  Score = nombre de bûches (bonus compris).
@@ -3491,7 +3491,7 @@ pseudoShow(scene === 'name');
   const { ln, ell } = Bourdi.chats;
   const LW = 128, LH = 28, BASE = 600, CX = 196;          // bûche, haut de la remorque, centre de la remorque
   const PENCHE_MAX = LW * .56;                              // le centre de la pile dépasse le bord : tout s'écroule
-  const RATES_MAX = 3, PARFAIT = 8;
+  const RATES_MAX = 1, PARFAIT = 8;                      // une bûche ratée = fini
 
   let G;
   function nouvellePartie(){
@@ -3661,7 +3661,6 @@ pseudoShow(scene === 'name');
     // HUD : score, bûches ratées restantes, penchant
     A.bigNum(String(G.score), 168, 46, 50, { align: 'right' });
     A.txt('bûches', 178, 58, 22, COL.white, { lw: 6, align: 'left' });
-    for (let i = 0; i < RATES_MAX; i++){ ctx.save(); ctx.globalAlpha = i < RATES_MAX - G.rates ? 1 : .25; ctx.translate(126 + i * 40, 98); ctx.scale(.26, .5); buche(0, 0, false); ctx.restore(); }
     A.blob(30, 120, 300, 16, 8, '#fff', 3); A.rr(180 + Math.min(0, p / PENCHE_MAX * 146), 123, Math.abs(p / PENCHE_MAX) * 146, 10, 5); ctx.fillStyle = k > .7 ? COL.red : k > .4 ? COL.orange : COL.green; ctx.fill();
     ln([[180, 116], [180, 140]], 3, COL.ink);
     // la phrase de fin, bien centrée et lisible
