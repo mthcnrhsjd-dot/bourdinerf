@@ -3279,6 +3279,171 @@ pseudoShow(scene === 'name');
 })();
 
 </script>
+<script>
+'use strict';
+// =====================================================================
+//  ÉPREUVE 12 — FUMETTE À HAUT RISQUE
+//  Garder appuyé = vapoter en cachette. Papa est de dos ; avant de se
+//  retourner il prévient (« Hum ? »), parfois c'est une fausse alerte
+//  (« Atchoum ! »). La fumée reste un peu dans l'air. 2 chances.
+//  Score = temps total passé à vapoter.
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const { ln, ell } = Bourdi.chats;
+  const { drawPerson, makePerson } = Bourdi.persos;
+  const PX = 210, PY = 470;                     // Papa (pieds)
+  const CHANCES = 2;
+
+  let G;
+  function nouvellePartie(){
+    const papa = makePerson('empty'); papa.shirt = '#3a6ad8'; papa.pants = '#5b3a29'; papa.style = 'court'; papa.hair = '#3a2a20'; papa.skin = '#f2c294';
+    G = { t: 0, count: -1.2, score: 0, chances: CHANCES, hold: new Set(), fume: 0, papa, st: 'dos', pt: 2.4, flip: 0, end: 0, nuages: [], vu: 0, play: 0 };
+  }
+  const dur = () => Math.min(1.6, G.play / 45);                     // ça se corse avec le temps (sans fin)
+  const fumeTrop = () => G.hold.size > 0 || G.fume > .22;
+
+  const snd = {
+    count(go){ A.tone(0, go ? 1046 : 523, go ? .3 : .12, .08, 'square'); },
+    tire(){ A.bruit(0, .18, .05, 'bandpass', 1800, 2, 900); },
+    hum(){ A.tone(0, 180, .3, .08, 'sawtooth', 240); },
+    atchoum(){ A.bruit(0, .12, .1, 'highpass', 2000, 1); A.tone(.12, 300, .25, .1, 'sawtooth', 120); A.bruit(.12, .3, .2, 'bandpass', 1200, 1); },
+    tourne(){ A.bruit(0, .12, .05, 'bandpass', 900, 2, 2000); },
+    vu(){ A.tone(0, 880, .12, .1, 'square'); A.tone(.12, 660, .12, .1, 'square'); A.tone(.24, 440, .3, .1, 'square'); }
+  };
+
+  function update(dt){
+    G.t += dt;
+    if (G.count < 0){ const b = Math.ceil(-G.count / .4); G.count += dt; const a = Math.ceil(-G.count / .4); if (a !== b) snd.count(a === 0); if (G.count >= 0) G.count = 0; return; }
+    if (G.end){ if (G.end > 0 && G.t - G.end > 1.6){ G.end = -1; A.fin({ score: Math.round(G.score * 10) * 100 }); } return; }
+    G.play += dt;
+    const fumeNow = G.hold.size > 0 && G.st !== 'pris';
+    if (fumeNow){ G.score += dt; G.fume = Math.min(1, G.fume + dt * 2.5); if (Math.random() < dt * 4) snd.tire();
+      if (Math.random() < dt * 9) G.nuages.push({ x: 92 + Math.random() * 20, y: 560, r: 10, t: 0, vx: 20 + Math.random() * 30 }); }
+    else G.fume = Math.max(0, G.fume - dt / .45);                     // la fumée met un peu de temps à partir
+    G.nuages.forEach(n => { n.t += dt; n.x += n.vx * dt; n.y -= 30 * dt; n.r += 18 * dt; }); G.nuages = G.nuages.filter(n => n.t < 1.6);
+    // Papa
+    G.pt -= dt;
+    if (G.st === 'dos' && G.pt <= 0){
+      if (Math.random() < .25){ G.st = 'atchoum'; G.pt = .8; A.texte('Atchoum !', PX + 30, 210, { size: 30, color: COL.yellow, dur: .8 }); snd.atchoum(); }
+      else { G.st = 'alerte'; G.pt = Math.max(.28, .85 - dur() * .36); A.texte('Hum ?', PX + 30, 210, { size: 32, color: COL.orange, dur: .7 }); snd.hum(); }
+    }
+    else if (G.st === 'atchoum' && G.pt <= 0){ G.st = 'dos'; G.pt = 1.4 + Math.random() * 2 - dur(); }
+    else if (G.st === 'alerte' && G.pt <= 0){ G.st = 'tourne'; G.pt = .16; snd.tourne(); }
+    else if (G.st === 'tourne'){ G.flip = 1 - G.pt / .16; if (G.pt <= 0){ G.flip = 1; G.st = 'face'; G.pt = 1.1 + Math.random() * .6;
+      if (fumeTrop()) pris(); } }
+    else if (G.st === 'face'){ if (fumeTrop()) pris(); else if (G.pt <= 0){ G.st = 'retour'; G.pt = .16; } }
+    else if (G.st === 'retour'){ G.flip = G.pt / .16; if (G.pt <= 0){ G.flip = 0; G.st = 'dos'; G.pt = 1.6 + Math.random() * 2.2 - dur() * 1.1; } }
+    else if (G.st === 'pris' && G.pt <= 0){
+      if (G.chances <= 0){ G.end = G.t; }
+      else { G.st = 'retour'; G.pt = .16; G.fume = 0; G.hold.clear(); }
+    }
+  }
+  function pris(){
+    G.chances--; G.st = 'pris'; G.pt = 1.4; G.vu = G.t;
+    A.texte('JE T\'AI VU !', 180, 300, { size: 40, color: COL.red, dur: 1.3, vy: 0 }); A.dire('JE T\'AI VU !'); snd.vu(); A.secousse(12, .4);
+  }
+
+  // ---------- Dessin ----------
+  function papaDos(x, y, sx){
+    const p = G.papa;
+    ctx.save(); ctx.translate(x, y); ctx.scale(sx, 1);
+    A.blob(-24, -64, 20, 62, 8, p.pants, 3); A.blob(4, -64, 20, 62, 8, p.pants, 3);
+    A.blob(-36, -150, 72, 92, 22, p.shirt, 4);
+    // bras qui font la vaisselle (vus de dos)
+    const w = Math.sin(G.t * 6) * 4;
+    ln([[-34, -136], [-46, -104 + w]], 15, COL.ink); ln([[-34, -136], [-46, -104 + w]], 10, p.shirt);
+    ln([[34, -136], [46, -104 - w]], 15, COL.ink); ln([[34, -136], [46, -104 - w]], 10, p.shirt);
+    // tête vue de dos : que des cheveux et les oreilles
+    A.circle(-30, -176, 8, p.skin, 3); A.circle(30, -176, 8, p.skin, 3);
+    A.circle(0, -180, 32, p.skin, 4);
+    ctx.beginPath(); ctx.arc(0, -180, 32, Math.PI * .85, Math.PI * 2.15); ctx.lineTo(0, -168); ctx.closePath(); ctx.fillStyle = p.hair; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.stroke();
+    ctx.restore();
+  }
+  function draw(){
+    ctx = A.ctx();
+    // cuisine
+    ctx.fillStyle = '#d6f5e3'; ctx.fillRect(-200, -300, 760, 1100);
+    for (let y = 140; y < 470; y += 34) for (let x = -200; x < 560; x += 34){ ctx.strokeStyle = '#bfe8d0'; ctx.lineWidth = 2; ctx.strokeRect(x, y, 34, 34); }
+    A.blob(150, 160, 120, 100, 6, '#8fd7ff', 5); ln([[210, 160], [210, 260]], 4, COL.ink); ln([[150, 210], [270, 210]], 4, COL.ink);   // fenêtre
+    ctx.fillStyle = '#c98a5a'; ctx.fillRect(-200, 470, 760, 400); ln([[-200, 470], [560, 470]], 5, COL.ink);
+    A.blob(80, 380, 260, 90, 8, '#eae6f2', 5); A.blob(160, 372, 100, 18, 6, '#c9c3d9', 3);                                             // évier
+    // Papa : de dos, puis il se retourne (on écrase l'image pour faire tourner le personnage)
+    const f = G.flip;
+    if (G.st === 'face' || G.st === 'pris' || (G.st === 'tourne' && f > .5) || (G.st === 'retour' && f > .5)){
+      const sx = Math.max(.05, (f - .5) * 2);
+      ctx.save(); ctx.translate(PX, PY); ctx.scale(sx, 1); ctx.translate(-PX, -PY);
+      drawPerson(G.papa, PX, PY, 1.05, G.t, { expr: G.st === 'pris' ? 'shock' : 'smile' });
+      if (G.st === 'pris'){ ctx.fillStyle = 'rgba(255,40,40,.25)'; ctx.beginPath(); ctx.arc(PX, PY - 190, 34, 0, Math.PI * 2); ctx.fill(); }
+      ctx.restore();
+    } else {
+      const twitch = G.st === 'alerte' ? Math.sin(G.t * 40) * 3 : G.st === 'atchoum' ? Math.sin(G.t * 30) * 4 : 0;
+      papaDos(PX + twitch, PY, f > 0 ? Math.max(.05, 1 - f * 2) : 1);
+      if (G.st === 'alerte'){ ctx.save(); ctx.translate(PX + 22, PY - 190); ctx.rotate(.3); A.circle(0, 0, 10, G.papa.skin, 3); ctx.restore(); }
+    }
+    // la fumée
+    G.nuages.forEach(n => { ctx.save(); ctx.globalAlpha = .75 * (1 - n.t / 1.6); A.circle(n.x, n.y, n.r, '#ffffff', 0); ctx.restore(); });
+    if (G.fume > .05){ ctx.save(); ctx.globalAlpha = Math.min(.8, G.fume); [[110, 520, 34], [150, 490, 40], [190, 470, 30]].forEach(([x, y, r]) => A.circle(x + Math.sin(G.t + x) * 6, y, r * (.6 + G.fume * .4), '#f4f2fa', 0)); ctx.restore(); }
+    // toi, au premier plan (vu de dos à gauche), la vapoteuse à la main
+    const smoking = G.hold.size > 0 && G.st !== 'pris';
+    ctx.save(); ctx.translate(90, 640);
+    A.blob(-60, -60, 120, 90, 40, COL.pink, 5);
+    A.circle(0, -96, 40, '#ffd9b8', 5);
+    ctx.beginPath(); ctx.arc(0, -98, 41, Math.PI * .95, Math.PI * 2.05); ctx.closePath(); ctx.fillStyle = '#5b3a29'; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.stroke();
+    // main + vapoteuse : près de la bouche quand on fume, cachée sinon
+    const hx = smoking ? 34 : 54, hy = smoking ? -86 : -10;
+    ln([[40, -40], [hx, hy]], 18, COL.ink); ln([[40, -40], [hx, hy]], 12, COL.pink);
+    ctx.save(); ctx.translate(hx + 6, hy - 6); ctx.rotate(smoking ? -.9 : .3); A.blob(-5, -24, 10, 30, 4, COL.violet, 3); A.blob(-3, -30, 6, 8, 2, COL.ink, 0); A.circle(0, 0, 2, smoking ? COL.sky : '#666', 0); ctx.restore();
+    A.circle(hx, hy, 9, '#ffd9b8', 3);
+    ctx.restore();
+    // HUD
+    A.bigNum((Math.floor(G.score * 10) / 10).toFixed(1).replace('.', ','), 196, 46, 50, { align: 'right' });
+    A.txt('s', 206, 58, 22, COL.white, { lw: 6, align: 'left' });
+    for (let i = 0; i < CHANCES; i++) heart(116 + i * 40 + 40, 96, i < G.chances);
+    // gros bouton FUMER
+    ctx.fillStyle = COL.ink; ctx.fillRect(-200, 690, 760, 300);
+    const held = G.hold.size > 0, dy = held ? 4 : 0;
+    A.rr(150, 622, 196, 70, 24); ctx.fillStyle = '#000'; ctx.fill();
+    A.blob(150, 616 + dy, 196, 70, 24, held ? COL.green : COL.violet, 4, '#000');
+    A.txt('FUMER', 248, 652 + dy, 32, COL.white, { lw: 8 });
+    if (G.count < 0){ const n = Math.ceil(-G.count / .4), fr = (-G.count % .4) / .4;
+      ctx.save(); ctx.translate(180, 330); const s = .7 + fr * .6; ctx.scale(s, s); A.bigNum(String(n), 0, 0, 120); ctx.restore(); }
+  }
+  function heart(x, y, full){
+    ctx.save(); ctx.translate(x, y); ctx.beginPath();
+    ctx.moveTo(0, 10); ctx.bezierCurveTo(-22, -6, -12, -22, 0, -10); ctx.bezierCurveTo(12, -22, 22, -6, 0, 10); ctx.closePath();
+    ctx.fillStyle = full ? COL.red : '#5a5070'; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = COL.white; ctx.stroke(); ctx.restore();
+  }
+
+  function down(p, id){ if (G.count < 0 || G.end || G.st === 'pris') return; if (p.y > 560) G.hold.add(id); }
+  function up(p, id){ if (id === 'all') G.hold.clear(); else G.hold.delete(id); }
+
+  function vignette(c, x, y, w, h, t){
+    ctx = c; const k = h / 230;
+    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-150, -230);
+    c.fillStyle = '#d6f5e3'; c.fillRect(-200, -50, 700, 400); c.fillStyle = '#c98a5a'; c.fillRect(-200, 200, 700, 100);
+    const save = G; G = { t, papa: { shirt: '#3a6ad8', pants: '#5b3a29', skin: '#f2c294', hair: '#3a2a20' } };
+    c.save(); c.translate(0, 200 - 470 * .8); c.scale(.8, .8); papaDos(230 / .8 + 0, 470, 1); c.restore(); G = save;
+    for (let i = 0; i < 4; i++){ const s = (t * .5 + i / 4) % 1; c.save(); c.globalAlpha = .8 * (1 - s); A.circle(80 + s * 50, 170 - s * 90, 14 + s * 20, '#fff', 0); c.restore(); }
+    A.blob(52, 150, 12, 36, 4, COL.violet, 3);
+    A.txt('Hum ?', 240, 40, 28, COL.orange, { lw: 7 });
+    c.restore();
+  }
+
+  Bourdi.ajouter({
+    id: 'fumette', titre: 'Fumette à haut risque', court: 'Fumette',
+    consigne: 'Garde le doigt appuyé pour vapoter, et lâche avant que Papa se retourne ! Attention : la fumée met un peu de temps à partir.',
+    plusPetitGagne: false,
+    seuils: { S: 34000, A: 28000, B: 22000, C: 15000, D: 8000 },
+    format: ms => (Math.max(0, ms) / 1000).toFixed(1).replace('.', ',') + ' s',
+    musique: 'jeu', vignette,
+    start(){ ctx = A.ctx(); nouvellePartie(); },
+    update, draw, down, up, etat: () => G
+  });
+})();
+
+</script>
 <!-- FIN -->
 <script>Bourdi.demarrer();</script>
 
