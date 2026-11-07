@@ -58,7 +58,9 @@ function resize(){
   const w = innerWidth, h = innerHeight, cs = getComputedStyle(safeProbe);
   const st = parseFloat(cs.paddingTop) || 0, sb = parseFloat(cs.paddingBottom) || 0, ah = h - st - sb;
   cvs.width = Math.round(w * dpr); cvs.height = Math.round(h * dpr);
-  scale = Math.min(w / W, ah / H); offX = (w - W * scale) / 2; offY = st + (ah - H * scale) / 2;
+  // le jeu est calé en BAS de l'écran : toute la place libre va en haut, sous la barre de l'iPhone
+  // (dans l'app Claude, la page est dans un cadre où l'iPhone ne donne pas la taille de sa barre)
+  scale = Math.min(w / W, ah / H); offX = (w - W * scale) / 2; offY = Math.max(st, h - sb - H * scale);
 }
 addEventListener('resize', resize); resize();
 
