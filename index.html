@@ -3684,7 +3684,7 @@ pseudoShow(scene === 'name');
     else if (G.phase === 'precision'){ G.u += dt * (G.vit + .3); }
     else if (G.phase === 'atchoum'){ G.pt -= dt;
       if (G.pt <= 0){
-        if (G.m >= MANCHES){ G.phase = 'fin'; G.end = G.t; A.texte('À vos souhaits !', 180, 300, { size: 38, color: COL.yellow, dur: 1.4, vy: 0 }); A.sons.bien(); A.particules(180, 300, 40, { speed: 340 }); }
+        if (G.m >= MANCHES){ G.phase = 'fin'; G.end = G.t; A.sons.bien(); A.particules(180, 300, 40, { speed: 340 }); }
         else { G.m++; nouvelleManche(); }
       } }
     else if (G.phase === 'fin' && G.t - G.end > 1.4){ G.phase = 'done'; A.fin({ score: G.score }); }
@@ -3699,8 +3699,8 @@ pseudoShow(scene === 'name');
       const k = G.force * (.35 + .65 * G.prec);                                  // 0 … 1
       const db = Math.round(45 + k * 80); G.k = k; G.db = db; G.score += db; G.phase = 'atchoum'; G.pt = 2.0;
       snd.hurle(k); A.secousse(4 + k * 22, .3 + k * .6);
-      if (k >= .85) A.texte('AAAATCHOUUUUM !!!', 180, 250, { size: 34, color: COL.red, dur: 1.5, vy: -20 });
-      else A.texte('atchoum', 180, 250, { size: 18 + k * 26, color: COL.white, dur: 1.2 });
+      if (k >= .85) A.texte('HATCHAAAAAAAAA', 180, 250, { size: 29, color: COL.red, dur: 1.5, vy: -20 });
+      else A.texte('hatcha', 180, 250, { size: 18 + k * 26, color: COL.white, dur: 1.2 });
       A.particules(X + 10, Y - 220, Math.round(10 + k * 50), { speed: 200 + k * 400, colors: ['#bfeaff', '#ffffff', '#d6f5ff'], up: 100 });
       if (k > .55){ G.colere = 1; setTimeout(snd.grogne, 700); }
       if (k > .6){ G.cadres = G.cadres.map((c, i) => c || (k > .75 || i === 0 ? .01 : 0)); }
@@ -3774,7 +3774,7 @@ pseudoShow(scene === 'name');
     drawPerson(elle(), 150, 300, 1.2, t, { expr: 'sleep' });
     const hy = 300 + (-56 - 98) * 1.2; ell(150, hy + 26, 16, 20, '#7a1f3d', 3);
     G = save;
-    A.txt('ATCHOUM !', 150 + Math.sin(t * 30) * 2, 30, 34, COL.red, { lw: 8 });
+    A.txt('HATCHAAAAAAAAA', 150 + Math.sin(t * 30) * 2, 30, 30, COL.red, { lw: 7, max: 290 });
     c.restore();
   }
   Bourdi.ajouter({
