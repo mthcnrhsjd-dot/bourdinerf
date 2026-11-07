@@ -475,7 +475,7 @@ function finish(res){
 // Les scores ne partent que depuis le vrai site : jamais depuis un test sur l'ordinateur ni depuis l'artifact.
 const LB_URL = 'https://script.google.com/macros/s/AKfycbyDoxK2r0sxeqL0tGhrGzzh9L162N48JmpAW9tpj_JnxxCSTvJV8qUDjfQxwFdd7lI2/exec';
 const LB_ON = /\.github\.io$/.test(location.hostname) && LB_URL.startsWith('https') && !SAVE.test;
-let lbData = null, lbState = 'idle', boardTab = 0;
+let lbData = null, lbState = 'idle', boardTab = 0, lbAt = 0;
 function lbSend(){
   if (!LB_ON || !SAVE.name) return;
   const s = {}, sens = {};
@@ -484,7 +484,7 @@ function lbSend(){
 }
 async function lbLoad(){
   lbState = 'load';
-  try { if (!LB_URL.startsWith('https')) throw 0; const r = await fetch(LB_URL); lbData = await r.json(); lbState = 'ok'; }
+  try { if (!LB_URL.startsWith('https')) throw 0; const r = await fetch(LB_URL); lbData = await r.json(); lbState = 'ok'; lbAt = Date.now(); }
   catch (e){ lbState = 'err'; }
 }
 
@@ -497,6 +497,7 @@ function enter(s){
   if (s === 'play') startEp();
   else if (s === 'result') Music.play('menu');
   else if (s === 'board') lbLoad();
+  else if (s === 'intro' && (!lbData || Date.now() - lbAt > 20000)) lbLoad();
   else if (s === 'menu' || s === 'title') Music.play('menu');
   pseudoShow(s === 'name');
 }
@@ -612,23 +613,50 @@ function drawIntro(){
   const ep = EPREUVES[curIdx];
   sunburst(180, 300, COL.pink, '#ff79b9', T * .25);
   const k = Math.min(1, sceneT / .3);
-  ctx.save(); ctx.translate(180, 92); const s = .5 + k * .5 + Math.sin(k * Math.PI) * .15; ctx.scale(s, s);
-  txt(ep.titre, 0, 0, 46, COL.yellow, { max: 320, lw: 11 }); ctx.restore();
+  ctx.save(); ctx.translate(180, 88); const s = .5 + k * .5 + Math.sin(k * Math.PI) * .15; ctx.scale(s, s);
+  txt(ep.titre, 0, 0, 44, COL.yellow, { max: 300, lw: 11 }); ctx.restore();
   // illustration
-  rr(30, 140, 300, 196, 26); ctx.fillStyle = COL.ink; ctx.fill();
-  ctx.save(); rr(30, 132, 300, 196, 26); ctx.clip(); ep.vignette(ctx, 30, 132, 300, 196, T); ctx.restore();
-  rr(30, 132, 300, 196, 26); ctx.lineWidth = 5; ctx.strokeStyle = COL.ink; ctx.stroke();
+  rr(30, 132, 300, 140, 22); ctx.fillStyle = COL.ink; ctx.fill();
+  ctx.save(); rr(30, 124, 300, 140, 22); ctx.clip(); ep.vignette(ctx, 30, 124, 300, 140, T); ctx.restore();
+  rr(30, 124, 300, 140, 22); ctx.lineWidth = 5; ctx.strokeStyle = COL.ink; ctx.stroke();
   // consigne
-  const ls = wrap(ep.consigne, 284, 19), bh = 28 + ls.length * 25;
-  blob(20, 346, 320, bh, 22, COL.white, 5);
-  ls.forEach((l, i) => txt(l, 180, 364 + i * 25, 19, COL.ink, { lw: 0 }));
+  const ls = wrap(ep.consigne, 290, 17), bh = 22 + ls.length * 22;
+  blob(20, 276, 320, bh, 20, COL.white, 5);
+  ls.forEach((l, i) => txt(l, 180, 292 + i * 22, 17, COL.ink, { lw: 0 }));
   // où j'en suis : record + jauge E → S
-  const rec = recOf(ep.id), gy = 346 + bh + 22;
-  txt(rec.tries ? 'Record : ' + ep.format(rec.best) : 'Pas encore jouée', 180, gy, 20, COL.white, { lw: 6 });
-  gaugeH(30, gy + 34, 300, rec.tries ? gaugePos(ep, rec.best, rec.rank) : null);
-  const by = Math.max(gy + 86, 560);
-  button('go', 70, Math.min(by, 640), 220, 76, 'GO !', { color: COL.green, size: 46, pulse: true });
+  const rec = recOf(ep.id), gy = 276 + bh + 18;
+  txt(rec.tries ? 'Record : ' + ep.format(rec.best) : 'Pas encore jouée', 180, gy, 19, COL.white, { lw: 6 });
+  gaugeH(30, gy + 28, 300, rec.tries ? gaugePos(ep, rec.best, rec.rank) : null);
+  // le top 3 de l'épreuve : on sait qui il faut battre
+  const ty = gy + 72;
+  miniBoard(ep, 20, ty, 320);
+  button('go', 70, Math.min(Math.max(ty + 100, 600), 640), 220, 70, 'GO !', { color: COL.green, size: 44, pulse: true });
   button('introBack', 14, 22, 56, 50, icoBack, { color: COL.violet });
+}
+// les meilleurs joueurs d'une épreuve (même pseudo = même joueur : on garde son meilleur score)
+function topRows(ep){
+  const best = {};
+  ((lbData && lbData[ep.id]) || []).forEach(r => { if (r.score != null && (!best[r.name] || better(ep, r.score, best[r.name].score))) best[r.name] = r; });
+  const rows = Object.values(best).sort((a, b) => ep.plusPetitGagne ? a.score - b.score : b.score - a.score);
+  rows.forEach((r, i) => { r.rank = i + 1; });
+  return rows;
+}
+function miniBoard(ep, x, y, w){
+  blob(x, y, w, 92, 16, COL.white, 4);
+  txt('Classement', x + 14, y + 15, 14, COL.violet, { align: 'left', lw: 0 });
+  const rows = topRows(ep), cy = y + 54;
+  if (!rows.length){
+    const m = lbState === 'load' ? 'Chargement…' : lbState === 'err' ? 'Pas de connexion.' : 'Pas encore de score ici !';
+    txt(m, x + w / 2, cy, 16, COL.violet, { lw: 0 }); return;
+  }
+  rows.slice(0, 3).forEach((r, i) => {
+    const ry = y + 36 + i * 21, me = r.name === SAVE.name;
+    if (me){ rr(x + 8, ry - 10, w - 16, 20, 6); ctx.fillStyle = '#ffe9a8'; ctx.fill(); }
+    circle(x + 24, ry, 8, [COL.yellow, '#c9d3e6', '#e39b5b'][i], 2);
+    txt(String(r.rank), x + 24, ry + 1, 11, COL.ink, { lw: 0 });
+    txt(r.name + (me ? ' (toi)' : ''), x + 40, ry + 1, 15, COL.ink, { align: 'left', lw: 0, max: w - 150 });
+    txt(ep.format(r.score), x + w - 14, ry + 1, 15, me ? COL.red : COL.violet, { align: 'right', lw: 0 });
+  });
 }
 
 // --- Pendant l'épreuve ---
