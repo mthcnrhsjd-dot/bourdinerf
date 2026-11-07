@@ -3318,7 +3318,7 @@ pseudoShow(scene === 'name');
     if (G.count < 0){ const b = Math.ceil(-G.count / .4); G.count += dt; const a = Math.ceil(-G.count / .4); if (a !== b) snd.count(a === 0); if (G.count >= 0) G.count = 0; return; }
     if (G.end){ if (G.end > 0 && G.t - G.end > 1.6){ G.end = -1; A.fin({ score: Math.round(G.score * 10) * 100 }); } return; }
     G.play += dt;
-    if (G.play >= DUREE && G.st !== 'pris'){ G.end = G.t; G.hold.clear(); A.texte('Pas vu, pas pris !', 180, 300, { size: 34, color: COL.green, dur: 1.5, vy: 0 }); A.sons.bien(); A.particules(180, 300, 40, { speed: 340 }); return; }
+    if (G.play >= DUREE && G.st !== 'pris'){ G.end = G.t; G.hold.clear(); A.texte('Ça passe pour cette fois !', 180, 300, { size: 28, color: COL.green, dur: 1.5, vy: 0 }); A.sons.bien(); A.particules(180, 300, 40, { speed: 340 }); return; }
     const fumeNow = G.hold.size > 0 && G.st !== 'pris';
     if (fumeNow){ G.score += dt; G.fume = Math.min(1, G.fume + dt * 2.5); if (Math.random() < dt * 4) snd.tire();
       if (Math.random() < dt * 9) G.nuages.push({ x: 92 + Math.random() * 20, y: 560, r: 10, t: 0, vx: 20 + Math.random() * 30 }); }
