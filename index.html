@@ -3479,26 +3479,27 @@ pseudoShow(scene === 'name');
 // =====================================================================
 //  ÉPREUVE 13 — TALALCOQ
 //  Empiler les bûches sur la remorque du tracteur, le plus haut et le plus
-//  droit possible. La bûche va et vient : toucher = la lâcher. La pile
-//  penche si c'est de travers ; trop penchée, elle s'écroule (fin).
-//  « Parfait ! » d'affilée = la pile se redresse. Bûche dorée = ×3.
-//  Plus haut : coups de vent. Score = nombre de bûches (bonus compris).
+//  droit possible. La grue forestière promène la bûche : toucher = la lâcher.
+//  Une bûche ratée tombe toute seule (3 ratées = fin). Si la pile penche
+//  trop, elle s'écroule (fin). « Parfait ! » ×3 d'affilée = la pile se
+//  redresse. Bûche dorée = ×3. Plus haut : coups de vent.
+//  Score = nombre de bûches (bonus compris).
 // =====================================================================
 (() => {
   const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
   const A = Bourdi.api; let ctx = A.ctx();
   const { ln, ell } = Bourdi.chats;
-  const LW = 112, LH = 28, BASE = 600, CX = 196;          // bûche, haut de la remorque, centre de la remorque
-  const PENCHE_MAX = LW * .5;                               // le centre de la pile dépasse le bord : tout s'écroule
+  const LW = 128, LH = 28, BASE = 600, CX = 196;          // bûche, haut de la remorque, centre de la remorque
+  const PENCHE_MAX = LW * .56;                              // le centre de la pile dépasse le bord : tout s'écroule
+  const RATES_MAX = 3, PARFAIT = 8;
 
   let G;
   function nouvellePartie(){
-    G = { t: 0, count: -1.2, score: 0, logs: [], cur: null, fall: null, cam: 0, end: 0, combo: 0, collapse: null, vent: 0, ventT: 3 };
+    G = { t: 0, count: -1.2, score: 0, logs: [], cur: null, fall: null, cam: 0, end: 0, combo: 0, collapse: null, vent: 0, ventT: 3, rates: 0, chutes: [], fin: '' };
     nouvelleBuche();
   }
   const top = () => BASE - G.logs.length * LH;
-  // vraie stabilité : pour chaque bûche, le centre de tout ce qui est posé dessus doit rester au-dessus d'elle.
-  // penche() renvoie le pire écart (signé), en pixels ; au-delà de PENCHE_MAX, ça s'écroule.
+  // vraie stabilité : pour chaque bûche, le centre de tout ce qui est posé dessus doit rester au-dessus d'elle
   function penche(){
     const L = G.logs; let pire = 0, sum = 0, n = 0;
     for (let i = L.length - 1; i > 0; i--){ sum += L[i].x; n++; const d = sum / n - L[i - 1].x; if (Math.abs(d) > Math.abs(pire)) pire = d; }
@@ -3506,7 +3507,7 @@ pseudoShow(scene === 'name');
   }
   function nouvelleBuche(){
     const n = G.logs.length, dore = n > 3 && Math.random() < .13;
-    G.cur = { x: Math.random() < .5 ? 50 : 310, dir: Math.random() < .5 ? 1 : -1, v: 170 + Math.min(330, n * 11), dore };
+    G.cur = { x: Math.random() < .5 ? 60 : 300, dir: Math.random() < .5 ? 1 : -1, v: 140 + Math.min(440, n * 10), dore };
   }
 
   const snd = {
@@ -3514,47 +3515,57 @@ pseudoShow(scene === 'name');
     pose(n){ A.bruit(0, .1, .25, 'lowpass', 500, 1); A.tone(0, 140 + n * 3, .12, .14, 'sine', 90); },
     parfait(c){ A.tone(0, 660 + c * 60, .12, .08, 'triangle'); A.tone(.08, 990 + c * 80, .14, .06, 'triangle'); },
     dore(){ [0, .07, .14].forEach((d, i) => A.tone(d, 1200 + i * 300, .15, .06, 'triangle')); },
+    rate(){ A.tone(0, 500, .5, .08, 'sine', 150); A.bruit(.45, .15, .2, 'lowpass', 400, 1); },
     craque(){ A.bruit(0, .9, .3, 'lowpass', 400, 1); for (let i = 0; i < 6; i++) A.bruit(.1 + i * .1, .15, .2, 'bandpass', 300 + i * 80, 2); },
-    vent(){ A.bruit(0, 1.2, .08, 'bandpass', 500, 1, 1400); }
+    vent(){ A.bruit(0, 1.2, .08, 'bandpass', 500, 1, 1400); },
+    pince(){ A.tone(0, 900, .05, .05, 'square'); }
   };
 
   function lache(){
     const c = G.cur; if (!c || G.fall) return;
-    G.fall = { x: c.x, y: top() - 150, vy: 0, dore: c.dore }; G.cur = null;
+    G.fall = { x: c.x, y: top() - 150, vy: 0, dore: c.dore }; G.cur = null; snd.pince();
   }
   function atterrit(f){
     const prev = G.logs.length ? G.logs[G.logs.length - 1].x : CX;
     let x = f.x, d = x - prev;
-    if (Math.abs(d) > LW * .72){ ecroule(f); return; }                      // complètement à côté : tout tombe
-    if (Math.abs(d) < 7){ x = prev; G.combo++; snd.parfait(G.combo); A.dire('Parfait !'); A.texte('Parfait !', CX, top() - 60 - G.cam, { size: 26, color: COL.green, dur: .7 });
-      if (G.combo >= 3){ G.logs.forEach(l => { l.x += (CX - l.x) * .35; }); A.particules(CX, top() - G.cam, 12, { speed: 200 }); } }
+    if (Math.abs(d) > LW * .8){                                               // complètement à côté : la bûche tombe toute seule
+      G.rates++; G.combo = 0; snd.rate(); A.secousse(4, .15);
+      G.chutes.push({ x, y: f.y, vx: Math.sign(d) * 120, vy: -80, r: 0, vr: Math.sign(d) * 5, dore: f.dore });
+      if (G.rates >= RATES_MAX){ ecroule(null); return; }
+      nouvelleBuche(); return;
+    }
+    if (Math.abs(d) < PARFAIT){ x = prev; G.combo++; snd.parfait(G.combo); A.dire('Parfait !'); A.texte('Parfait !', CX, top() - 70 + G.cam, { size: 26, color: COL.green, dur: .7 });
+      if (G.combo >= 3){ G.logs.forEach(l => { l.x += (CX - l.x) * .35; }); A.particules(CX, top() + G.cam, 12, { speed: 200 }); } }
     else G.combo = 0;
-    G.logs.push({ x, dore: f.dore, rot: (Math.random() - .5) * .04 });
+    G.logs.push({ x, dore: f.dore, rot: (Math.random() - .5) * .03, v: Math.floor(Math.random() * 3) });
     G.score += f.dore ? 3 : 1; snd.pose(G.logs.length); A.secousse(2, .08);
-    if (f.dore){ snd.dore(); A.texte('Bûche dorée !', CX, top() - 40 - G.cam, { size: 26, color: COL.yellow, dur: .9 }); }
+    if (f.dore){ snd.dore(); A.texte('Bûche dorée !', CX, top() - 40 + G.cam, { size: 26, color: COL.yellow, dur: .9 }); }
     if (Math.abs(penche()) > PENCHE_MAX){ ecroule(null); return; }
     nouvelleBuche();
   }
   function ecroule(f){
-    const logs = G.logs.map((l, i) => ({ x: l.x, y: BASE - (i + 1) * LH, vx: (Math.random() - .5) * 300 + Math.sign(penche() || 1) * 120, vy: -Math.random() * 300, r: 0, vr: (Math.random() - .5) * 8, dore: l.dore }));
+    const p = penche() || 1;
+    const logs = G.logs.map((l, i) => ({ x: l.x, y: BASE - (i + 1) * LH, vx: (Math.random() - .5) * 300 + Math.sign(p) * 120, vy: -Math.random() * 300, r: 0, vr: (Math.random() - .5) * 8, dore: l.dore }));
     if (f) logs.push({ x: f.x, y: f.y, vx: (f.x - CX) * 2, vy: 0, r: 0, vr: 4, dore: f.dore });
     G.collapse = logs; G.logs = []; G.cur = null; G.end = G.t;
     snd.craque(); A.secousse(14, .6);
-    A.texte('Oh non ! Comment on va livrer Talalcoq ?', 180, 300, { size: 22, color: COL.red, dur: 2, vy: 0 });
+    G.fin = 'Oh non ! Comment on va livrer Talalcoq ?';     // espaces insécables : pas de « ? » tout seul sur une ligne
   }
   function update(dt){
     G.t += dt;
     if (G.count < 0){ const b = Math.ceil(-G.count / .4); G.count += dt; const a = Math.ceil(-G.count / .4); if (a !== b) snd.count(a === 0); if (G.count >= 0) G.count = 0; return; }
+    const tombe = l => { l.vy += 900 * dt; l.x += l.vx * dt; l.y += l.vy * dt; l.r += l.vr * dt; if (l.y > BASE + 40){ l.y = BASE + 40; l.vy *= -.3; l.vx *= .7; l.vr *= .6; } };
+    G.chutes.forEach(tombe);
     if (G.end){
-      G.collapse.forEach(l => { l.vy += 900 * dt; l.x += l.vx * dt; l.y += l.vy * dt; l.r += l.vr * dt; if (l.y > BASE + 40){ l.y = BASE + 40; l.vy *= -.3; l.vx *= .7; } });
-      if (G.end > 0 && G.t - G.end > 2.2){ G.end = -1; A.fin({ score: G.score }); }
+      G.collapse.forEach(tombe);
+      if (G.end > 0 && G.t - G.end > 3.6){ G.end = -1; A.fin({ score: G.score }); }    // le temps de lire la phrase
       return;
     }
     // coups de vent (plus haut que 15 bûches)
-    if (G.logs.length > 15){ G.ventT -= dt; if (G.ventT <= 0){ G.vent = (Math.random() < .5 ? -1 : 1) * (60 + Math.random() * 80); G.ventT = 3 + Math.random() * 3; snd.vent(); } }
+    if (G.logs.length > 15){ G.ventT -= dt; if (G.ventT <= 0){ G.vent = (Math.random() < .5 ? -1 : 1) * (50 + Math.random() * 70); G.ventT = 3 + Math.random() * 3; snd.vent(); } }
     G.vent *= Math.pow(.4, dt);
     const c = G.cur;
-    if (c){ c.x += (c.dir * c.v + G.vent) * dt; if (c.x > 320){ c.x = 320; c.dir = -1; } if (c.x < 40){ c.x = 40; c.dir = 1; } }
+    if (c){ c.x += (c.dir * c.v + G.vent) * dt; if (c.x > 300){ c.x = 300; c.dir = -1; } if (c.x < 60){ c.x = 60; c.dir = 1; } }
     const f = G.fall;
     if (f){ f.vy += 2200 * dt; f.y += f.vy * dt; if (f.y >= top() - LH){ G.fall = null; atterrit(f); } }
     // la caméra suit la tour
@@ -3563,49 +3574,102 @@ pseudoShow(scene === 'name');
   }
 
   // ---------- Dessin ----------
-  function buche(x, y, dore, r = 0){
+  const ECORCES = ['#9a5a2a', '#8a4e22', '#a8662f'];
+  function buche(x, y, dore, r = 0, v = 0){
     ctx.save(); ctx.translate(x, y); ctx.rotate(r);
-    A.blob(-LW / 2, -LH / 2, LW, LH, 12, dore ? '#ffcf3a' : '#a0622e', 3.5);
-    ln([[-LW / 2 + 16, -4], [LW / 2 - 24, -6]], 2.5, dore ? '#e0a400' : '#7a4418'); ln([[-LW / 2 + 26, 5], [LW / 2 - 16, 4]], 2.5, dore ? '#e0a400' : '#7a4418');
-    A.circle(LW / 2 - 10, 0, LH / 2 - 2, dore ? '#fff0a8' : '#e8b878', 3); A.circle(LW / 2 - 10, 0, 5, null, 2, dore ? '#e0a400' : '#b8824a');
+    const bois = dore ? '#ffcf3a' : ECORCES[v % 3], fonce = dore ? '#e0a400' : '#5e3414';
+    A.blob(-LW / 2, -LH / 2, LW, LH, 13, bois, 3.5);
+    // écorce : traits et un petit nœud
+    ctx.save(); A.rr(-LW / 2, -LH / 2, LW, LH, 13); ctx.clip();
+    [[-46, -6, -10, -7], [-30, 3, 18, 2], [-8, -8, 30, -9], [6, 7, 40, 6]].forEach(([a, b, c, d]) => ln([[a, b], [c, d]], 2.5, fonce));
+    ell(-20 + v * 12, 0, 5, 3.5, fonce, 0);
+    ctx.fillStyle = 'rgba(255,255,255,.18)'; ctx.fillRect(-LW / 2, -LH / 2 + 3, LW, 5);
+    ctx.restore();
+    // le bout coupé avec ses cernes
+    ell(LW / 2 - 8, 0, 9, LH / 2 - 1, dore ? '#fff0a8' : '#f0c890', 3);
+    ell(LW / 2 - 8, 0, 5.5, 8, null, 2); ctx.strokeStyle = dore ? '#e0a400' : '#c08a50';
+    ell(LW / 2 - 8, 0, 2.5, 3.5, dore ? '#e0a400' : '#c08a50', 0);
     if (dore && Math.sin(G.t * 8 + x) > .6) A.star(-LW / 4, -LH / 2 - 4, 7, '#fff', 2);
     ctx.restore();
   }
+  function decor(){
+    // ciel, soleil, nuages
+    const g = ctx.createLinearGradient(0, -300, 0, 640); g.addColorStop(0, '#3fb4ff'); g.addColorStop(1, '#cdf0ff');
+    ctx.fillStyle = g; ctx.fillRect(-200, -300, 760, 1100);
+    A.circle(300, 120 + G.cam * .1, 34, '#ffe066', 4);
+    [[60, 170, 1], [220, 90, .8], [140, 260, .7]].forEach(([x, y, k]) => { const dx = Math.sin(G.t * .2 + x) * 10; [[0, 0, 20], [20, -8, 24], [42, 0, 18]].forEach(([a, b, r]) => A.circle(x + dx + a * k, y + G.cam * .15 + b * k, r * k, '#fff', 0)); });
+    // collines et sapins (plus lointains = défilent moins vite)
+    ctx.save(); ctx.translate(0, G.cam * .25);
+    ctx.fillStyle = '#8fd36a'; ctx.beginPath(); ctx.moveTo(-200, 520); ctx.quadraticCurveTo(60, 430, 220, 500); ctx.quadraticCurveTo(360, 450, 560, 510); ctx.lineTo(560, 700); ctx.lineTo(-200, 700); ctx.fill();
+    ctx.restore();
+    ctx.save(); ctx.translate(0, G.cam * .45);
+    for (let i = 0; i < 10; i++){ const x = i * 42 - 20, h = 110 + (i * 37) % 70, b = 580;
+      ctx.beginPath(); ctx.moveTo(x, b - h); ctx.lineTo(x + 30, b - h * .45); ctx.lineTo(x + 18, b - h * .45); ctx.lineTo(x + 38, b); ctx.lineTo(x - 38, b); ctx.lineTo(x - 18, b - h * .45); ctx.lineTo(x - 30, b - h * .45); ctx.closePath();
+      ctx.fillStyle = i % 2 ? '#2f8f3a' : '#3fa535'; ctx.fill(); ctx.lineWidth = 3.5; ctx.strokeStyle = COL.ink; ctx.lineJoin = 'round'; ctx.stroke();
+      A.blob(x - 5, b - 2, 10, 14, 2, '#6a3a1a', 2.5); }
+    ctx.restore();
+  }
+  function tracteur(){
+    ctx.save(); ctx.translate(0, G.cam);
+    // herbe, petites fleurs et champignons
+    ctx.fillStyle = '#6cc04a'; ctx.fillRect(-200, BASE + 46, 760, 400); ln([[-200, BASE + 46], [560, BASE + 46]], 4, COL.ink);
+    [[20, 0], [150, 1], [330, 0], [250, 1]].forEach(([x, k]) => { if (k){ A.blob(x - 3, BASE + 56, 6, 10, 2, '#fff', 2); ell(x, BASE + 56, 10, 6, COL.red, 2.5); } else { A.circle(x, BASE + 60, 4, COL.yellow, 2); } });
+    // remorque : plateau, ridelles, roues
+    A.blob(100, BASE, 196, 20, 4, '#b8763a', 4);
+    [104, 286].forEach(x => A.blob(x - 4, BASE - 26, 10, 30, 3, '#8a5222', 3));
+    [[132, BASE + 30], [264, BASE + 30]].forEach(([x, y]) => { A.circle(x, y, 18, '#2f2a3d', 4); A.circle(x, y, 7, '#c9c3d9', 3); });
+    ln([[100, BASE + 12], [60, BASE + 16]], 6, COL.ink);
+    // tracteur rouge
+    A.blob(-40, BASE - 36, 104, 58, 12, COL.red, 4); A.blob(-30, BASE - 96, 60, 62, 8, '#bfeaff', 4); A.blob(-36, BASE - 104, 72, 12, 4, COL.red, 3);
+    A.blob(52, BASE - 64, 8, 30, 3, '#555', 2.5); A.circle(56, BASE - 70, 5, '#bbb', 0);
+    A.circle(30, BASE + 24, 28, '#2f2a3d', 4); A.circle(30, BASE + 24, 11, COL.yellow, 3); A.circle(-22, BASE + 34, 14, '#2f2a3d', 4);
+    ctx.restore();
+  }
+  function grue(){
+    // la grue forestière : un mât sur la remorque et un bras qui suit la hauteur de la pile
+    const by = top() - 210 + G.cam;                              // hauteur du bras à l'écran
+    const mastX = 112;
+    A.blob(mastX - 9, by - 8, 18, BASE + G.cam - by - 16, 4, COL.yellow, 3.5);
+    for (let y = by + 30; y < BASE + G.cam - 30; y += 46) ln([[mastX - 9, y], [mastX + 9, y + 23]], 2.5, '#c99a00');
+    A.blob(mastX - 30, by - 14, 284, 18, 6, COL.yellow, 3.5);                              // le bras
+    for (let x = mastX - 20; x < mastX + 250; x += 28) ln([[x, by - 12], [x + 14, by + 2]], 2.5, '#c99a00');
+    A.circle(mastX, by - 5, 9, COL.orange, 3);
+    return by;
+  }
   function draw(){
     ctx = A.ctx();
-    // ciel et forêt (défilent un peu moins vite que la tour)
-    const g = ctx.createLinearGradient(0, -300, 0, 700); g.addColorStop(0, '#5ec8ff'); g.addColorStop(1, '#d6f5ff');
-    ctx.fillStyle = g; ctx.fillRect(-200, -300, 760, 1100);
-    ctx.save(); ctx.translate(0, G.cam * .4);
-    for (let i = 0; i < 9; i++){ const x = i * 48 - 20, h = 120 + (i * 37) % 60;
-      ctx.beginPath(); ctx.moveTo(x, 560 - h); ctx.lineTo(x + 36, 560); ctx.lineTo(x - 36, 560); ctx.closePath(); ctx.fillStyle = i % 2 ? '#2f8f3a' : '#3fa535'; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.stroke(); }
-    ctx.restore();
-    ctx.save(); ctx.translate(0, G.cam);
-    // sol, tracteur et remorque
-    ctx.fillStyle = '#7ab84a'; ctx.fillRect(-200, BASE + 46, 760, 400); ln([[-200, BASE + 46], [560, BASE + 46]], 4, COL.ink);
-    A.blob(96, BASE, 200, 22, 4, '#8a5a3a', 4);                                                          // plateau de la remorque
-    [[120, BASE + 30], [270, BASE + 30]].forEach(([x, y]) => { A.circle(x, y, 18, '#2f2a3d', 4); A.circle(x, y, 7, '#c9c3d9', 3); });
-    ln([[96, BASE + 12], [60, BASE + 16]], 6, COL.ink);
-    A.blob(-30, BASE - 40, 92, 62, 10, COL.red, 4); A.blob(0, BASE - 92, 54, 56, 8, '#bfeaff', 4); A.blob(-6, BASE - 98, 66, 12, 4, COL.red, 3);  // tracteur
-    A.circle(36, BASE + 26, 26, '#2f2a3d', 4); A.circle(36, BASE + 26, 10, COL.yellow, 3); A.circle(-12, BASE + 34, 14, '#2f2a3d', 4);
-    ctx.restore();
-    // la pile (elle se balance si elle penche)
-    const p = penche(), sway = Math.sin(G.t * 3) * Math.min(1, Math.abs(p) / PENCHE_MAX) * .02;
-    ctx.save(); ctx.translate(CX, BASE + G.cam); ctx.rotate(sway + p / PENCHE_MAX * .04); ctx.translate(-CX, -(BASE + G.cam));
-    G.logs.forEach((l, i) => buche(l.x, BASE - i * LH - LH / 2 + G.cam, l.dore, l.rot));
+    decor();
+    tracteur();
+    // la pile (elle se balance quand elle penche)
+    const p = penche(), k = Math.min(1, Math.abs(p) / PENCHE_MAX), sway = Math.sin(G.t * 3) * k * .02;
+    ctx.save(); ctx.translate(CX, BASE + G.cam); ctx.rotate(sway + p / PENCHE_MAX * .035); ctx.translate(-CX, -(BASE + G.cam));
+    G.logs.forEach((l, i) => buche(l.x, BASE - i * LH - LH / 2 + G.cam, l.dore, l.rot, l.v));
     ctx.restore();
     if (G.collapse) G.collapse.forEach(l => buche(l.x, l.y + G.cam, l.dore, l.r));
-    // la bûche qui va et vient, et celle qui tombe
-    if (G.cur){ const y = top() - 150 + G.cam; ln([[G.cur.x, y - 60], [G.cur.x, y - LH / 2]], 3, '#5b3a29'); buche(G.cur.x, y, G.cur.dore); }
+    G.chutes.forEach(l => buche(l.x, l.y + G.cam, l.dore, l.r));
+    // la grue, son chariot, le câble et la pince qui tient la bûche
+    if (!G.end){
+      const by = grue();
+      const cx = G.cur ? G.cur.x : G.fall ? G.fall.x : CX, ly = top() - 150 + G.cam;
+      A.blob(cx - 18, by - 22, 36, 16, 4, COL.orange, 3); A.circle(cx - 10, by - 22, 4, '#555', 2); A.circle(cx + 10, by - 22, 4, '#555', 2);
+      if (G.cur){ ln([[cx, by - 6], [cx, ly - LH / 2 - 8]], 3, '#3a3a4a'); buche(cx, ly, G.cur.dore);
+        ln([[cx - 14, ly - LH / 2 - 8], [cx - 18, ly - 4]], 4, '#555'); ln([[cx + 14, ly - LH / 2 - 8], [cx + 18, ly - 4]], 4, '#555'); A.blob(cx - 16, ly - LH / 2 - 12, 32, 8, 3, '#666', 2.5); }
+      else ln([[cx, by - 6], [cx, ly - 40]], 3, '#3a3a4a');
+    }
     if (G.fall) buche(G.fall.x, G.fall.y + G.cam, G.fall.dore);
     if (Math.abs(G.vent) > 20){ for (let i = 0; i < 4; i++){ const y = 200 + i * 60, x = ((G.t * 400 * Math.sign(G.vent)) + i * 97) % 420 - 30; ln([[x, y], [x + 40 * Math.sign(G.vent), y]], 3, 'rgba(255,255,255,.8)'); } }
-    // indicateur de penchant
-    const k = Math.min(1, Math.abs(p) / PENCHE_MAX);
-    A.blob(30, 120, 300, 16, 8, '#fff', 3); A.rr(180 + Math.min(0, p / PENCHE_MAX * 146), 123, Math.abs(p / PENCHE_MAX) * 146, 10, 5); ctx.fillStyle = k > .7 ? COL.red : k > .4 ? COL.orange : COL.green; ctx.fill();
-    ln([[180, 116], [180, 140]], 3, COL.ink);
-    // HUD
+    // HUD : score, bûches ratées restantes, penchant
     A.bigNum(String(G.score), 168, 46, 50, { align: 'right' });
     A.txt('bûches', 178, 58, 22, COL.white, { lw: 6, align: 'left' });
+    for (let i = 0; i < RATES_MAX; i++){ ctx.save(); ctx.globalAlpha = i < RATES_MAX - G.rates ? 1 : .25; ctx.translate(126 + i * 40, 98); ctx.scale(.26, .5); buche(0, 0, false); ctx.restore(); }
+    A.blob(30, 120, 300, 16, 8, '#fff', 3); A.rr(180 + Math.min(0, p / PENCHE_MAX * 146), 123, Math.abs(p / PENCHE_MAX) * 146, 10, 5); ctx.fillStyle = k > .7 ? COL.red : k > .4 ? COL.orange : COL.green; ctx.fill();
+    ln([[180, 116], [180, 140]], 3, COL.ink);
+    // la phrase de fin, bien centrée et lisible
+    if (G.fin){
+      const ls = A.wrap(G.fin, 270, 25), h = 30 + ls.length * 32, y = 300 - h / 2;
+      A.blob(30, y, 300, h, 22, COL.white, 5);
+      ls.forEach((l, i) => A.txt(l, 180, y + 30 + i * 32, 25, COL.red, { lw: 6, max: 280 }));
+    }
     if (G.count < 0){ const n = Math.ceil(-G.count / .4), fr = (-G.count % .4) / .4;
       ctx.save(); ctx.translate(180, 330); const s = .7 + fr * .6; ctx.scale(s, s); A.bigNum(String(n), 0, 0, 120); ctx.restore(); }
   }
@@ -3615,10 +3679,12 @@ pseudoShow(scene === 'name');
     c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-150, -230);
     c.fillStyle = '#9fdcff'; c.fillRect(-200, -50, 700, 400);
     const save = G; G = { t };
-    c.save(); c.translate(0, -390); c.scale(1, 1);
-    for (let i = 0; i < 6; i++) buche(150 + Math.sin(i * 1.7) * 10, BASE - i * LH - LH / 2, i === 3);
-    buche(150 + Math.sin(t * 2) * 70, BASE - 7 * LH - 40, false);
-    A.blob(50, BASE, 200, 22, 4, '#8a5a3a', 4);
+    c.save(); c.translate(-46, -390);
+    for (let i = 0; i < 6; i++) buche(196 + Math.sin(i * 1.7) * 10, BASE - i * LH - LH / 2, i === 3, 0, i);
+    const bx = 196 + Math.sin(t * 2) * 70;
+    A.blob(80, BASE - 260, 260, 16, 6, COL.yellow, 3.5); ln([[bx, BASE - 246], [bx, BASE - 7 * LH - 54]], 3, '#3a3a4a');
+    buche(bx, BASE - 7 * LH - 40, false);
+    A.blob(100, BASE, 196, 20, 4, '#b8763a', 4);
     c.restore(); G = save;
     c.restore();
   }
@@ -3626,7 +3692,7 @@ pseudoShow(scene === 'name');
     id: 'talalcoq', titre: 'Talalcoq', court: 'Talalcoq',
     consigne: 'Touche l\'écran pour lâcher la bûche. Empile-les bien droit, le plus haut possible, sans tout faire tomber !',
     plusPetitGagne: false,
-    seuils: { S: 80, A: 55, B: 38, C: 22, D: 10 },
+    seuils: { S: 150, A: 90, B: 55, C: 35, D: 18 },
     format: n => Math.max(0, Math.round(n)) + ' bûches',
     musique: 'jeu', vignette,
     start(){ ctx = A.ctx(); nouvellePartie(); },
