@@ -3285,7 +3285,7 @@ pseudoShow(scene === 'name');
 //  ÉPREUVE 12 — FUMETTE À HAUT RISQUE
 //  Garder appuyé = vapoter en cachette. Papa est de dos ; avant de se
 //  retourner il prévient (« Hum ? »), parfois c'est une fausse alerte
-//  (« Atchoum ! »). La fumée reste un peu dans l'air. 2 chances.
+//  (« Atchoum ! »). La fumée reste un peu dans l'air. 30 s, une seule chance.
 //  Score = temps total passé à vapoter.
 // =====================================================================
 (() => {
@@ -3294,14 +3294,14 @@ pseudoShow(scene === 'name');
   const { ln, ell } = Bourdi.chats;
   const { drawPerson, makePerson } = Bourdi.persos;
   const PX = 210, PY = 470;                     // Papa (pieds)
-  const CHANCES = 2;
+  const DUREE = 30;                            // durée de l'épreuve (s)
 
   let G;
   function nouvellePartie(){
     const papa = makePerson('empty'); papa.shirt = '#3a6ad8'; papa.pants = '#5b3a29'; papa.style = 'court'; papa.hair = '#3a2a20'; papa.skin = '#f2c294';
-    G = { t: 0, count: -1.2, score: 0, chances: CHANCES, hold: new Set(), fume: 0, papa, st: 'dos', pt: 2.4, flip: 0, end: 0, nuages: [], vu: 0, play: 0 };
+    G = { t: 0, count: -1.2, score: 0, hold: new Set(), fume: 0, papa, st: 'dos', pt: 2.4, flip: 0, end: 0, nuages: [], vu: 0, play: 0 };
   }
-  const dur = () => Math.min(1.6, G.play / 45);                     // ça se corse avec le temps (sans fin)
+  const dur = () => Math.min(1.6, G.play / 19);                     // ça se corse au fil des 30 secondes
   const fumeTrop = () => G.hold.size > 0 || G.fume > .22;
 
   const snd = {
@@ -3318,6 +3318,7 @@ pseudoShow(scene === 'name');
     if (G.count < 0){ const b = Math.ceil(-G.count / .4); G.count += dt; const a = Math.ceil(-G.count / .4); if (a !== b) snd.count(a === 0); if (G.count >= 0) G.count = 0; return; }
     if (G.end){ if (G.end > 0 && G.t - G.end > 1.6){ G.end = -1; A.fin({ score: Math.round(G.score * 10) * 100 }); } return; }
     G.play += dt;
+    if (G.play >= DUREE && G.st !== 'pris'){ G.end = G.t; G.hold.clear(); A.texte('Pas vu, pas pris !', 180, 300, { size: 34, color: COL.green, dur: 1.5, vy: 0 }); A.sons.bien(); A.particules(180, 300, 40, { speed: 340 }); return; }
     const fumeNow = G.hold.size > 0 && G.st !== 'pris';
     if (fumeNow){ G.score += dt; G.fume = Math.min(1, G.fume + dt * 2.5); if (Math.random() < dt * 4) snd.tire();
       if (Math.random() < dt * 9) G.nuages.push({ x: 92 + Math.random() * 20, y: 560, r: 10, t: 0, vx: 20 + Math.random() * 30 }); }
@@ -3335,13 +3336,10 @@ pseudoShow(scene === 'name');
       if (fumeTrop()) pris(); } }
     else if (G.st === 'face'){ if (fumeTrop()) pris(); else if (G.pt <= 0){ G.st = 'retour'; G.pt = .16; } }
     else if (G.st === 'retour'){ G.flip = G.pt / .16; if (G.pt <= 0){ G.flip = 0; G.st = 'dos'; G.pt = 1.6 + Math.random() * 2.2 - dur() * 1.1; } }
-    else if (G.st === 'pris' && G.pt <= 0){
-      if (G.chances <= 0){ G.end = G.t; }
-      else { G.st = 'retour'; G.pt = .16; G.fume = 0; G.hold.clear(); }
-    }
+    else if (G.st === 'pris' && G.pt <= 0){ G.end = G.t; }
   }
   function pris(){
-    G.chances--; G.st = 'pris'; G.pt = 1.4; G.vu = G.t;
+    G.st = 'pris'; G.pt = 1.4; G.vu = G.t; G.hold.clear();
     A.texte('JE T\'AI VU !', 180, 300, { size: 40, color: COL.red, dur: 1.3, vy: 0 }); A.dire('JE T\'AI VU !'); snd.vu(); A.secousse(12, .4);
   }
 
@@ -3403,7 +3401,8 @@ pseudoShow(scene === 'name');
     // HUD
     A.bigNum((Math.floor(G.score * 10) / 10).toFixed(1).replace('.', ','), 196, 46, 50, { align: 'right' });
     A.txt('s', 206, 58, 22, COL.white, { lw: 6, align: 'left' });
-    for (let i = 0; i < CHANCES; i++) heart(116 + i * 40 + 40, 96, i < G.chances);
+    const left = Math.max(0, 1 - G.play / DUREE);
+    A.blob(30, 86, 300, 18, 9, '#fff', 4); if (left > 0){ A.rr(34, 90, 292 * left, 10, 5); ctx.fillStyle = left < .2 ? COL.red : COL.violet; ctx.fill(); }
     // gros bouton FUMER
     ctx.fillStyle = COL.ink; ctx.fillRect(-200, 690, 760, 300);
     const held = G.hold.size > 0, dy = held ? 4 : 0;
@@ -3438,7 +3437,7 @@ pseudoShow(scene === 'name');
     id: 'fumette', titre: 'Fumette à haut risque', court: 'Fumette',
     consigne: 'Garde le doigt appuyé pour vapoter, et lâche avant que Papa se retourne ! Attention : la fumée met un peu de temps à partir.',
     plusPetitGagne: false,
-    seuils: { S: 34000, A: 28000, B: 22000, C: 15000, D: 8000 },
+    seuils: { S: 15000, A: 12000, B: 9000, C: 6000, D: 3000 },
     format: ms => (Math.max(0, ms) / 1000).toFixed(1).replace('.', ',') + ' s',
     musique: 'jeu', vignette,
     start(){ ctx = A.ctx(); nouvellePartie(); },
