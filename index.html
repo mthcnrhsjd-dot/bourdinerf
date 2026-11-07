@@ -3684,7 +3684,7 @@ pseudoShow(scene === 'name');
     else if (G.phase === 'precision'){ G.u += dt * (G.vit + .3); }
     else if (G.phase === 'atchoum'){ G.pt -= dt;
       if (G.pt <= 0){
-        if (G.m >= MANCHES){ G.phase = 'fin'; G.end = G.t; A.sons.bien(); A.particules(180, 300, 40, { speed: 340 }); }
+        if (G.m >= MANCHES){ G.phase = 'fin'; G.end = G.t; A.texte('Ah, mon éternuement est fort !', 180, 300, { size: 24, color: COL.yellow, dur: 1.4, vy: 0 }); A.sons.bien(); A.particules(180, 300, 40, { speed: 340 }); }
         else { G.m++; nouvelleManche(); }
       } }
     else if (G.phase === 'fin' && G.t - G.end > 1.4){ G.phase = 'done'; A.fin({ score: G.score }); }
