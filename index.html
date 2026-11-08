@@ -397,7 +397,7 @@ document.addEventListener('visibilitychange', () => {
 const EPREUVES = [];
 const Bourdi = window.Bourdi = {
   ajouter(ep){ if (ep.actif === false || EPREUVES.some(e => e.id === ep.id)) return; EPREUVES.push(ep); },
-  demarrer(){ requestAnimationFrame(frame); }
+  demarrer(){ requestAnimationFrame(frame); lbLoad(); }
 };
 function rankOf(ep, res){
   const s = ep.seuils, v = res.score; let r = 'E';
@@ -503,6 +503,7 @@ function enter(s){
   else if (s === 'board') lbLoad();
   else if (s === 'intro' && (!lbData || Date.now() - lbAt > 20000)) lbLoad();
   else if (s === 'menu' || s === 'title') Music.play('menu');
+  if (s === 'title' && lbState !== 'load' && (!lbData || Date.now() - lbAt > 60000)) lbLoad();
   pseudoShow(s === 'name');
 }
 
@@ -550,6 +551,31 @@ function bolt(x, y, k){
   ctx.closePath(); ctx.fillStyle = COL.yellow; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.lineJoin = 'round'; ctx.stroke(); ctx.restore();
 }
 
+// --- Le BourdiFien : celui qui est n°1 dans le plus d'épreuves (égalité : le plus de 2es places) ---
+let champCache = null, champAt = -1;
+function champion(){
+  if (!lbData) return null;
+  if (champAt === lbAt) return champCache;
+  const c = {};
+  EPREUVES.forEach(ep => {
+    const best = {};
+    (lbData[ep.id] || []).forEach(r => { if (r.score != null && r.name && (!best[r.name] || better(ep, r.score, best[r.name].score))) best[r.name] = r; });
+    const L = Object.values(best).sort((a, b) => better(ep, a.score, b.score) ? -1 : better(ep, b.score, a.score) ? 1 : 0);
+    L.slice(0, 2).forEach((r, i) => { (c[r.name] = c[r.name] || [0, 0])[i]++; });
+  });
+  const names = Object.keys(c).filter(n => c[n][0] > 0);
+  names.sort((a, b) => c[b][0] - c[a][0] || c[b][1] - c[a][1] || a.localeCompare(b));
+  champCache = names[0] || null; champAt = lbAt; return champCache;
+}
+function couronne(x, y, k){
+  ctx.save(); ctx.translate(x, y); ctx.scale(k, k);
+  ctx.beginPath(); [[-26, 12], [-31, -12], [-14, 0], [0, -19], [14, 0], [31, -12], [26, 12]].forEach(([a, b], i) => i ? ctx.lineTo(a, b) : ctx.moveTo(a, b)); ctx.closePath();
+  ctx.fillStyle = COL.yellow; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.lineJoin = 'round'; ctx.stroke();
+  [[-31, -12], [0, -19], [31, -12]].forEach(([a, b]) => circle(a, b, 4.5, COL.yellow, 3));
+  [[-14, 5, COL.red], [0, 5, COL.blue], [14, 5, COL.red]].forEach(([a, b, f]) => circle(a, b, 3.5, f, 2));
+  ctx.restore();
+}
+
 // --- Accueil ---
 function drawTitle(){
   sunburst(180, 230, COL.yellow, '#ffe45c', T * .2);
@@ -560,6 +586,14 @@ function drawTitle(){
   }
   const pop = Math.min(1, sceneT / .35), ease = 1 + Math.sin(pop * Math.PI) * .15;
   logo(180, 240, pop * ease);
+  const champ = champion();
+  if (champ){
+    const a = Math.min(1, Math.max(0, (sceneT - .3) / .3));
+    ctx.save(); ctx.globalAlpha = a;
+    couronne(180, 344 + Math.sin(T * 3) * 3, 1);
+    txt(champ + ' est le BourdiFien !', 180, 390, 26, COL.white, { stroke: COL.violet, shadow: COL.pink, lw: 7, max: 330 });
+    ctx.restore();
+  }
   button('play', 55, 430, 250, 80, 'JOUER', { color: COL.red, size: 40, pulse: true });
   button('board', 75, 535, 210, 58, 'Classement', { color: COL.blue, size: 26 });
   button('music', 20, 24, 56, 50, icoNote(SAVE.music), { color: COL.pink });
