@@ -3859,6 +3859,243 @@ pseudoShow(scene === 'name');
 })();
 
 </script>
+<script>
+'use strict';
+// =====================================================================
+//  ÉPREUVE 15 — GONFLE LA ROUE
+//  Le camion benne (cabine blanche, benne orange, citerne de 1000 litres)
+//  a la roue arrière à plat. Taper sur le compresseur pour la gonfler :
+//  l'aiguille du cadran (0 à 4 bar, zone rouge après 3) monte à chaque tape.
+//  L'air met un petit moment à arriver : l'aiguille continue de monter
+//  après la dernière tape. Plus de 3 bar = BOUM, la roue éclate (score 0).
+//  Fin : 1,2 s sans taper, ou la barre de temps (10 s) est vide.
+//  Score = pression finale en centièmes de bar (300 = 3,00 bar, le maximum).
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const DUREE = 10;                 // temps pour gonfler (s)
+  const TAPE = .075;               // air envoyé par une tape (bar), ±6 %
+  const DEBIT = 5;                 // vitesse à laquelle l'air arrive dans la roue
+  const LIMITE = 3.004;            // au-dessus : la roue éclate
+  const ATTENTE = 1.2;             // sans taper pendant ce temps = on regarde l'aiguille
+  const GY = 610, R = 30, RX = 92, FX = 270;      // sol, rayon des roues, roue arrière (crevée), roue avant
+  const DX = 180, DY = 236, DR = 104;              // le cadran
+  const A0 = Math.PI * .75, SWEEP = Math.PI * 1.5; // 0 bar en bas à gauche, 4 bar en bas à droite
+
+  function ln(pts, w, c){ ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.lineWidth = w; ctx.strokeStyle = c; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke(); }
+  function ell(x, y, rx, ry, fill, lw = 3){ ctx.beginPath(); ctx.ellipse(x, y, Math.max(1, rx), Math.max(1, ry), 0, 0, Math.PI * 2); if (fill){ ctx.fillStyle = fill; ctx.fill(); } if (lw){ ctx.lineWidth = lw; ctx.strokeStyle = COL.ink; ctx.stroke(); } }
+
+  let G;
+  function nouvellePartie(){
+    G = { t: 0, count: -1.2, p: 0, air: 0, play: 0, last: 0, taps: 0, ferme: false, end: 0, endDur: 0, boum: false, fin: '', score: 0, pompe: 0, eau: 0, eauV: 0, bouts: [], fini: false, aig: 0 };
+  }
+
+  const snd = {
+    count(go){ A.tone(0, go ? 1046 : 523, go ? .3 : .12, .08, 'square'); },
+    pschit(){ A.bruit(0, .09, .22, 'highpass', 2600, 1); A.tone(0, 95 + Math.random() * 15, .07, .06, 'square'); },
+    boum(){ A.bruit(0, .8, .55, 'lowpass', 260, 1); A.bruit(0, .25, .4, 'highpass', 1400, 1); A.bruit(.15, 1.4, .12, 'bandpass', 3200, 1, 900); },
+    fin(){ A.tone(0, 660, .1, .07, 'triangle'); A.tone(.1, 880, .16, .07, 'triangle'); }
+  };
+
+  function tape(){
+    if (G.count < 0 || G.end || G.ferme) return;
+    G.air += TAPE * (.94 + Math.random() * .12); G.taps++; G.last = G.play; G.pompe = 1;
+    G.eauV += (Math.random() < .5 ? -1 : 1) * 1.2;
+    snd.pschit();
+    A.particules(RX + 26, GY - R - 4, 3, { colors: ['#ffffff', '#dff4ff'], speed: 80, size: 5 });
+  }
+  function boum(){
+    G.boum = true; G.score = 0; G.end = G.t; G.endDur = 4.3; G.air = 0;
+    snd.boum(); A.secousse(18, .6);
+    A.texte('BOUM !', RX + 40, GY - 120, { size: 54, color: COL.red, dur: 1.2, vy: -30 });
+    A.particules(RX, GY - R, 40, { colors: ['#2f2a3d', '#4a4458', '#ffffff'], speed: 520, size: 9 });
+    for (let i = 0; i < 9; i++) G.bouts.push({ x: RX, y: GY - R, vx: (Math.random() - .5) * 520, vy: -200 - Math.random() * 420, r: 0, vr: (Math.random() - .5) * 14, w: 10 + Math.random() * 14 });
+    setTimeout(() => { if (G.boum) G.fin = 'Oh mince\u00a0! Comment on va faire les voyages d\'eau\u00a0?'; }, 700);
+  }
+  function finir(){
+    G.fini = true; G.end = G.t; G.endDur = 2.2;
+    G.score = Math.round(G.p * 100);                 // en centièmes de bar (le classement n'aime que les entiers)
+    if (G.score >= 300){ A.sons.bien(); A.dire('Pile poil !'); A.texte('Pile poil !', 180, 400, { size: 34, color: COL.green, dur: 1.4, vy: -20 }); A.particules(DX, DY, 40, { speed: 320 }); }
+    else snd.fin();
+  }
+
+  function update(dt){
+    G.t += dt;
+    G.pompe = Math.max(0, G.pompe - dt * 7);
+    // l'eau ballotte dans la citerne
+    G.eauV += -G.eau * 40 * dt; G.eauV *= Math.pow(.25, dt); G.eau += G.eauV * dt * 8; G.eau = Math.max(-1, Math.min(1, G.eau));
+    G.bouts.forEach(b => { b.vy += 1000 * dt; b.x += b.vx * dt; b.y += b.vy * dt; b.r += b.vr * dt; if (b.y > GY + 6){ b.y = GY + 6; b.vy *= -.25; b.vx *= .6; b.vr *= .5; } });
+    // l'aiguille suit la pression avec un peu de souplesse
+    G.aig += ((G.boum ? 0 : G.p) - G.aig) * Math.min(1, dt * (G.boum ? 3 : 14));
+    if (G.count < 0){ const b = Math.ceil(-G.count / .4); G.count += dt; const a = Math.ceil(-G.count / .4); if (a !== b) snd.count(a === 0); if (G.count >= 0) G.count = 0; return; }
+    if (G.end){
+      if (G.end > 0 && G.t - G.end > G.endDur){ G.end = -1; A.fin({ score: G.score }); }
+      return;
+    }
+    G.play += dt;
+    // l'air arrive petit à petit dans la roue
+    const f = G.air * Math.min(1, DEBIT * dt); G.p += f; G.air -= f;
+    if (G.p > LIMITE){ boum(); return; }
+    if (G.play >= DUREE) G.ferme = true;
+    const arret = G.ferme || (G.taps > 0 && G.play - G.last > ATTENTE);
+    if (arret && G.air < .002){ G.p += G.air; G.air = 0; if (G.p > LIMITE){ boum(); return; } finir(); }
+  }
+
+  // ---------- Dessin ----------
+  function decor(){
+    const g = ctx.createLinearGradient(0, 0, 0, GY); g.addColorStop(0, '#3fb4ff'); g.addColorStop(1, '#cdf0ff');
+    ctx.fillStyle = g; ctx.fillRect(-200, -100, 760, GY + 100);
+    [[40, 400, 1], [300, 360, .8]].forEach(([x, y, k]) => { [[0, 0, 18], [18, -7, 22], [38, 0, 16]].forEach(([a, b, r]) => A.circle(x + a * k + Math.sin(G.t * .2 + x) * 6, y + b * k, r * k, '#fff', 0)); });
+    ctx.fillStyle = '#8fd36a'; ctx.beginPath(); ctx.moveTo(-200, 520); ctx.quadraticCurveTo(80, 450, 220, 500); ctx.quadraticCurveTo(340, 460, 560, 505); ctx.lineTo(560, GY); ctx.lineTo(-200, GY); ctx.fill();
+    // la cour en gravier
+    ctx.fillStyle = '#d8c7a4'; ctx.fillRect(-200, GY, 760, 300); ln([[-200, GY], [560, GY]], 4, COL.ink);
+    [[20, 640], [70, 680], [130, 655], [300, 690], [330, 645], [250, 705], [40, 710]].forEach(([x, y]) => ell(x, y, 5, 3, '#b8a684', 2));
+  }
+  // une roue normale
+  function roue(x, cy){
+    A.circle(x, cy, R, '#2f2a3d', 4); A.circle(x, cy, 13, '#c9c3d9', 3);
+    for (let i = 0; i < 5; i++){ const a = i * Math.PI * .4; A.circle(x + Math.cos(a) * 7, cy + Math.sin(a) * 7, 1.8, COL.ink, 0); }
+  }
+  // la roue arrière : écrasée quand elle est à plat, ronde quand elle est gonflée
+  function roueArriere(k){
+    const plat = G && G.boum ? 1.25 : 1 - k;
+    const ry = R - plat * 11, rx = R + plat * 7, cy = GY - ry;
+    ell(RX, cy, rx, ry, '#2f2a3d', 4);
+    if (plat > .3) ln([[RX - rx + 6, GY - 3], [RX + rx - 6, GY - 3]], 3, '#1a1626');
+    A.circle(RX, GY - (R - plat * 5) + plat * 3, 13, '#c9c3d9', 3);
+    const vy = GY - (R - plat * 5) + plat * 3;
+    for (let i = 0; i < 5; i++){ const a = i * Math.PI * .4; A.circle(RX + Math.cos(a) * 7, vy + Math.sin(a) * 7, 1.8, COL.ink, 0); }
+    return { vx: RX + 10, vy: vy - 9 };   // la valve
+  }
+  function camion(k){
+    const a = -(G && G.boum ? 1.2 : 1 - k) * .06;      // le camion penche du côté de la roue à plat
+    ctx.save(); ctx.translate(FX, GY); ctx.rotate(a); ctx.translate(-FX, -GY);
+    // châssis
+    A.blob(40, 538, 292, 16, 5, '#4a4458', 3.5);
+    // pare-boue et passages de roue
+    A.blob(52, 548, 80, 12, 5, '#2f2a3d', 2.5);
+    // benne orange
+    A.blob(28, 476, 190, 64, 8, COL.orange, 4);
+    [70, 112, 154, 196].forEach(x => ln([[x, 482], [x, 534]], 3, '#d86a00'));
+    A.blob(24, 470, 198, 12, 4, '#ffa64d', 3);
+    // la citerne de 1000 litres : cuve blanche dans sa cage en métal
+    const cx = 56, cy = 378, cw = 128, ch = 94;
+    A.blob(cx, cy, cw, ch, 10, '#f3f6fa', 4);
+    ctx.save(); A.rr(cx + 4, cy + 4, cw - 8, ch - 8, 8); ctx.clip();
+    const niv = cy + 30, h = G ? G.eau * 9 : 0;
+    ctx.beginPath(); ctx.moveTo(cx, niv - h); ctx.quadraticCurveTo(cx + cw / 2, niv + h * .3 + Math.sin((G ? G.t : 0) * 4) * 2, cx + cw, niv + h); ctx.lineTo(cx + cw, cy + ch); ctx.lineTo(cx, cy + ch); ctx.closePath();
+    ctx.fillStyle = 'rgba(94,200,255,.55)'; ctx.fill();
+    ctx.restore();
+    for (let x = cx + 22; x < cx + cw; x += 22) ln([[x, cy], [x, cy + ch]], 3, '#8a8f99');
+    for (let y = cy + 24; y < cy + ch; y += 24) ln([[cx, y], [cx + cw, y]], 3, '#8a8f99');
+    A.rr(cx, cy, cw, ch, 10); ctx.lineWidth = 4; ctx.strokeStyle = '#6b707a'; ctx.stroke();
+    A.blob(cx + cw / 2 - 14, cy - 10, 28, 12, 4, '#2f2a3d', 3);          // bouchon
+    A.blob(cx + cw - 6, cy + ch - 20, 16, 12, 3, '#2f2a3d', 2.5);        // robinet
+    // cabine blanche
+    A.blob(222, 446, 110, 98, 14, '#ffffff', 4);
+    A.blob(262, 458, 60, 42, 8, '#bfeaff', 3.5);
+    ln([[268, 462], [282, 494]], 3, 'rgba(255,255,255,.8)');
+    ln([[250, 456], [250, 536]], 3, '#c9c3d9');
+    A.blob(232, 506, 14, 5, 2, '#9a8fb0', 2);                            // poignée
+    A.blob(320, 508, 14, 14, 4, COL.yellow, 3);                          // phare
+    A.blob(300, 530, 38, 12, 4, '#9a8fb0', 3);                           // pare-chocs
+    A.blob(214, 404, 9, 50, 3, '#6b707a', 3);                            // pot d'échappement
+    A.blob(326, 466, 10, 22, 3, '#2f2a3d', 2.5);                         // rétroviseur
+    ctx.restore();
+    roue(FX, GY - R);
+    return roueArriere(k);
+  }
+  function compresseur(valve){
+    const j = G ? G.pompe : 0, ox = Math.sin((G ? G.t : 0) * 90) * j * 2, oy = -j * 3;
+    // le tuyau jusqu'à la valve
+    ctx.beginPath(); ctx.moveTo(176, 676); ctx.bezierCurveTo(120, 700, 70, 690, valve.vx + 8, valve.vy + 30); ctx.quadraticCurveTo(valve.vx + 10, valve.vy + 10, valve.vx, valve.vy);
+    ctx.lineWidth = 9; ctx.strokeStyle = COL.ink; ctx.lineCap = 'round'; ctx.stroke(); ctx.lineWidth = 5; ctx.strokeStyle = COL.yellow; ctx.stroke();
+    A.circle(valve.vx, valve.vy, 4, '#555', 2);
+    ctx.save(); ctx.translate(ox, oy);
+    // cuve rouge, moteur, poignée, roulettes
+    A.circle(190, 708, 10, '#2f2a3d', 3); A.circle(300, 708, 10, '#2f2a3d', 3);
+    A.blob(168, 650, 150, 52, 26, COL.red, 4);
+    ln([[186, 662], [300, 662]], 4, 'rgba(255,255,255,.35)');
+    A.blob(200, 620, 82, 34, 8, '#4a4458', 4);
+    for (let i = 0; i < 4; i++) ln([[212 + i * 16, 626], [212 + i * 16, 648]], 3, '#2f2a3d');
+    ln([[312, 640], [330, 612], [330, 596]], 6, COL.ink); ln([[312, 640], [330, 612], [330, 596]], 3, '#9a8fb0');
+    A.circle(296, 634, 10, '#fff', 3); ln([[296, 634], [300, 627]], 2, COL.red);   // petit manomètre
+    ctx.restore();
+  }
+  function cadran(p){
+    // fond du cadran
+    A.circle(DX, DY, DR + 10, '#9a8fb0', 5);
+    A.circle(DX, DY, DR, '#ffffff', 4);
+    // zone rouge après 3 bar
+    ctx.beginPath(); ctx.arc(DX, DY, DR - 14, A0 + SWEEP * .75, A0 + SWEEP); ctx.lineWidth = 18; ctx.strokeStyle = COL.red; ctx.lineCap = 'butt'; ctx.stroke();
+    // graduations : tous les 0,1 bar, plus grandes tous les 0,5 et tous les 1
+    for (let i = 0; i <= 40; i++){
+      const a = A0 + SWEEP * i / 40, big = i % 10 === 0, mid = i % 5 === 0;
+      const r1 = DR - 4, r2 = DR - (big ? 26 : mid ? 20 : 13);
+      ln([[DX + Math.cos(a) * r1, DY + Math.sin(a) * r1], [DX + Math.cos(a) * r2, DY + Math.sin(a) * r2]], big ? 4 : mid ? 3 : 2, COL.ink);
+      if (big){ const rn = DR - 44; A.txt(String(i / 10), DX + Math.cos(a) * rn, DY + Math.sin(a) * rn, 24, COL.ink, { lw: 0 }); }
+    }
+    A.txt('bar', DX, DY + 50, 22, '#6b707a', { lw: 0 });
+    // l'aiguille (elle tremble un peu quand on tape)
+    const tr = G ? Math.sin(G.t * 60) * G.pompe * .012 : 0;
+    const a = A0 + SWEEP * Math.max(0, Math.min(4, p)) / 4 + tr;
+    ln([[DX - Math.cos(a) * 16, DY - Math.sin(a) * 16], [DX + Math.cos(a) * (DR - 12), DY + Math.sin(a) * (DR - 12)]], 5, COL.red);
+    A.circle(DX, DY, 9, COL.ink, 0); A.circle(DX, DY, 4, '#9a8fb0', 0);
+    // un reflet sur la vitre
+    ctx.beginPath(); ctx.arc(DX, DY, DR - 6, Math.PI * 1.15, Math.PI * 1.45); ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(94,200,255,.35)'; ctx.lineCap = 'round'; ctx.stroke();
+  }
+  function draw(){
+    ctx = A.ctx();
+    decor();
+    const k = Math.min(1, G.p / 3);
+    const valve = camion(k);
+    compresseur(valve);
+    G.bouts.forEach(b => { ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.r); A.blob(-b.w / 2, -4, b.w, 8, 3, '#2f2a3d', 2); ctx.restore(); });
+    cadran(G.aig);
+    // barre de temps
+    const left = Math.max(0, 1 - G.play / DUREE);
+    A.blob(30, 86, 300, 18, 9, '#fff', 4); if (left > 0){ A.rr(34, 90, 292 * left, 10, 5); ctx.fillStyle = left < .2 ? COL.red : COL.violet; ctx.fill(); }
+    // le résultat, au centième
+    if (G.fini || G.boum){
+      A.bigNum((G.score / 100).toFixed(2).replace('.', ','), 200, 46, 50, { align: 'right' });
+      A.txt('bar', 210, 58, 22, COL.white, { lw: 6, align: 'left' });
+    }
+    // la phrase de fin, bien centrée et lisible
+    if (G.fin){
+      const ls = A.wrap(G.fin, 270, 25), h = 30 + ls.length * 32, y = 330 - h / 2;
+      A.blob(30, y, 300, h, 22, COL.white, 5);
+      ls.forEach((l, i) => A.txt(l, 180, y + 30 + i * 32, 25, COL.red, { lw: 6, max: 280 }));
+    }
+    if (G.count < 0){ const n = Math.ceil(-G.count / .4), fr = (-G.count % .4) / .4;
+      ctx.save(); ctx.translate(180, 330); const s = .7 + fr * .6; ctx.scale(s, s); A.bigNum(String(n), 0, 0, 120); ctx.restore(); }
+  }
+  function down(){ tape(); }
+  function vignette(c, x, y, w, h, t){
+    ctx = c; const k = h / 230;
+    const save = G; G = { t, p: 0, pompe: 0, eau: Math.sin(t * 2) * .5, boum: false };
+    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-150, -230);
+    c.fillStyle = '#9fdcff'; c.fillRect(-200, -50, 700, 400);
+    c.save(); c.translate(150, 115); c.scale(.64, .64); c.translate(-180, -542);
+    c.fillStyle = '#d8c7a4'; c.fillRect(-200, GY, 760, 200);
+    const v = camion(.15 + (Math.sin(t * 1.5) * .5 + .5) * .5);
+    compresseur(v);
+    c.restore();
+    c.restore(); G = save;
+  }
+  Bourdi.ajouter({
+    id: 'roue', titre: 'Gonfle la roue', court: 'Gonfle la roue',
+    consigne: 'Tape vite sur le compresseur pour gonfler la roue jusqu\'à 3 bar pile. Au-dessus, ça éclate !',
+    plusPetitGagne: false,
+    seuils: { S: 300, A: 297, B: 292, C: 285, D: 270 },        // centièmes de bar
+    format: n => (Math.max(0, n) / 100).toFixed(2).replace('.', ',') + ' bar',
+    musique: 'jeu', vignette,
+    start(){ ctx = A.ctx(); nouvellePartie(); },
+    update, draw, down, etat: () => G
+  });
+})();
+
+</script>
 <!-- FIN -->
 <script>Bourdi.demarrer();</script>
 
