@@ -87,6 +87,9 @@ let SAVE = (() => {
 function save(){ try { localStorage.setItem(KEY, JSON.stringify(SAVE)); } catch (e) {} }
 save();
 const recOf = id => SAVE.rec[id] || (SAVE.rec[id] = { best: null, rank: null, tries: 0 });
+// 8 nov. : le record Fumette de Xray datait d'une ancienne version (avec 3 chances) : on l'efface une seule fois
+// (le rang est gardé pour que les épreuves suivantes restent ouvertes)
+if (!SAVE.fixFumette1){ if (SAVE.name === 'Xray' && SAVE.rec.fumette) SAVE.rec.fumette.best = null; SAVE.fixFumette1 = true; save(); }
 
 // ---------- Dessin : utilitaires partagés ----------
 const FONT = 'ui-rounded, "Arial Rounded MT Bold", "Trebuchet MS", system-ui, sans-serif';
