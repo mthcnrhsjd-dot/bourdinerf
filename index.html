@@ -4102,17 +4102,18 @@ pseudoShow(scene === 'name');
 //  ÉPREUVE 16 — KADOUR ET LE POULET ZIFR
 //  Kadour (au milieu) et ses 4 femmes attendent à table. Taper (avec tous
 //  ses doigts, partout) pour déplumer le poulet « zifr » (il sent fort).
-//  90 plumes par poulet : 80 petites (1 tape) + 10 de la queue (2 tapes).
+//  160 plumes par poulet : 140 du corps (1 tape) + 20 de la queue (2 tapes).
 //  Poulet fini = servi (Kadour d'abord, puis les femmes de gauche à droite).
 //  30 s. À la fin, celles et celui qui n'ont pas eu de poulet se plaignent.
-//  Score = plumes enlevées (5 poulets = 450 = rang S ; ensuite du rab).
+//  Score = plumes enlevées (5 poulets = 800 = rang S ; ensuite du rab).
 // =====================================================================
 (() => {
   const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
   const A = Bourdi.api; let ctx = A.ctx();
   const { drawPerson } = Bourdi.persos;
   const DUREE = 30;                          // secondes
-  const PETITES = 80, QUEUE = 10;            // 80 + 10×2 = 100 tapes par poulet
+  const PETITES = 140, QUEUE = 20;           // 140 + 20×2 = 180 tapes par poulet (160 plumes)
+  const TEINTES = ['#c8823c', '#b06a2c', '#d99a52', '#a85a24', '#e3b06a'];   // une poule rousse de la ferme
   const PX = 180, PY = 540, RX = 92, RY = 66; // le poulet sur la planche
   const SEATS = [44, 112, 180, 248, 316];    // de gauche à droite ; Kadour au milieu
   const ORDRE = [2, 0, 1, 3, 4];             // Kadour d'abord, puis les femmes de gauche à droite
@@ -4133,19 +4134,30 @@ pseudoShow(scene === 'name');
   function ell(x, y, rx, ry, fill, lw = 3, rot = 0){ ctx.beginPath(); ctx.ellipse(x, y, Math.max(1, rx), Math.max(1, ry), rot, 0, Math.PI * 2); if (fill){ ctx.fillStyle = fill; ctx.fill(); } if (lw){ ctx.lineWidth = lw; ctx.strokeStyle = COL.ink; ctx.stroke(); } }
 
   let G;
-  function nouveauPoulet(){
-    const pl = [];
-    for (let i = 0; i < PETITES; i++){
-      // réparties sur le corps (un peu plus serrées vers le haut)
-      let x, y; do { x = (Math.random() * 2 - 1); y = (Math.random() * 2 - 1); } while (x * x + y * y > .86);
-      pl.push({ x: PX + x * RX * .95 - 6, y: PY + y * RY * .92 - 8, r: (Math.random() - .5) * 1.4 + (x > 0 ? .4 : -.4), c: Math.random() < .7 ? '#fffaf0' : '#efdcb4', q: 0 });
+  let VIG = null;
+  function nouveauPoulet(){ G.poulet = { pl: genPlumes(), arr: 0 }; }
+  function genPlumes(){
+    // plumes du corps : rangées serrées comme des écailles, pointe vers la queue (à droite)
+    let pts = [], sp = 17;
+    while (pts.length < PETITES && sp > 6){
+      pts = [];
+      for (let row = 0, y = -RY * .86; y <= RY * .86; y += sp * .78, row++)
+        for (let x = -RX * .98 + (row % 2) * sp / 2; x <= RX * .8; x += sp){
+          const nx = (x + 10) / RX, ny = y / RY; if (nx * nx + ny * ny > .9) continue;
+          pts.push({ x: PX + x + (Math.random() - .5) * 4, y: PY + y + (Math.random() - .5) * 3, ny });
+        }
+      sp -= .5;
     }
+    while (pts.length > PETITES) pts.splice(Math.floor(Math.random() * pts.length), 1);
+    const pl = pts.map(p => ({ x: p.x, y: p.y, r: .18 + p.ny * .45 + (Math.random() - .5) * .25, c: TEINTES[Math.floor(Math.random() * TEINTES.length)], q: 0, L: 22 + Math.random() * 5 }));
+    // la queue : un éventail de grandes plumes (deux tapes chacune)
     for (let i = 0; i < QUEUE; i++){
-      const a = -.9 + i * (1.6 / (QUEUE - 1));
-      pl.push({ x: PX + RX * .88 + Math.cos(a) * 22, y: PY - 14 + Math.sin(a) * 26, r: a, c: i % 2 ? '#c99a5b' : '#e8d2a8', q: 2 });
+      const a = -1.15 + (i % 10) * (1.5 / 9) + (i >= 10 ? .08 : 0);
+      pl.push({ x: PX + RX * .62, y: PY - 10, r: a, c: i % 3 ? '#8a4a1e' : '#2f2a3d', q: 2, big: true, L: i >= 10 ? 46 : 56 });
     }
-    pl.sort((p, q) => p.q - q.q || p.y - q.y);
-    G.poulet = { pl, arr: 0 };
+    // dessin : la queue d'abord, puis de la queue vers la tête (les plumes de devant recouvrent celles de derrière)
+    pl.sort((p, q) => (q.big ? 1 : 0) - (p.big ? 1 : 0) || q.x - p.x);
+    return pl;
   }
   function nouvellePartie(){
     G = { t: 0, count: -1.2, play: 0, score: 0, servis: [0, 0, 0, 0, 0], n: 0, vols: [], serve: [], end: 0, poulet: null, fini: false, bulles: 0 };
@@ -4166,12 +4178,14 @@ pseudoShow(scene === 'name');
     const pl = G.poulet.pl; if (!pl.length) return;
     // la plume la plus proche du doigt (si on tape à côté, la plus proche quand même)
     let bi = 0, bd = 1e9;
-    for (let i = 0; i < pl.length; i++){ const d = (pl[i].x - p.x) ** 2 + (pl[i].y - p.y) ** 2; if (d < bd){ bd = d; bi = i; } }
+    for (let i = 0; i < pl.length; i++){
+      const f = pl[i], m = f.big ? f.L * .55 : f.L * .2, cx = f.x + Math.cos(f.r) * m, cy = f.y + Math.sin(f.r) * m;   // le milieu de la plume
+      const d = (cx - p.x) ** 2 + (cy - p.y) ** 2; if (d < bd){ bd = d; bi = i; } }
     const f = pl[bi];
     if (f.q === 2){ f.q = 1; f.r += .35; snd.tire(); return; }              // grande plume : il faut tirer deux fois
     pl.splice(bi, 1); G.score++; snd.plume();
     if (G.vols.length > 70) G.vols.shift();
-    G.vols.push({ x: f.x, y: f.y, vx: (Math.random() - .5) * 260, vy: -160 - Math.random() * 200, r: f.r, vr: (Math.random() - .5) * 10, c: f.c, big: f.q !== 0 || f.big, t: 0 });
+    G.vols.push({ x: f.x, y: f.y, vx: (Math.random() - .5) * 260, vy: -160 - Math.random() * 200, r: f.r, vr: (Math.random() - .5) * 6, c: f.c, big: f.big, L: f.L, q: 0, t: 0 });
     if (!pl.length) servir();
   }
   function servir(){
@@ -4248,24 +4262,41 @@ pseudoShow(scene === 'name');
   function poulet(x, y, s, nu){
     ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
     const peau = '#ffd9bf';
-    // cuisses
-    [-1, 1].forEach(d => { ell(d * 46, 44, 30, 22, peau, 4, d * .5); ln([[d * 62, 56], [d * 80, 70]], 11, COL.ink); ln([[d * 62, 56], [d * 80, 70]], 6, '#fff'); A.circle(d * 82, 72, 6, '#fff', 3); });
+    // pattes jaunes avec trois doigts
+    [-1, 1].forEach(d => { const fx = d * 30 + 6, fy = RY + 26;
+      ln([[fx, RY - 14], [fx, fy]], 9, COL.ink); ln([[fx, RY - 14], [fx, fy]], 5, '#ffc21f');
+      [[-14, 8], [0, 12], [14, 8]].forEach(([a, b]) => { ln([[fx, fy], [fx + a, fy + b]], 7, COL.ink); ln([[fx, fy], [fx + a, fy + b]], 3.5, '#ffc21f'); }); });
     // corps
     ell(0, 0, RX, RY, peau, 4);
     ell(-24, -26, 34, 16, 'rgba(255,255,255,.4)', 0, -.2);
-    // ailes
-    ell(-RX + 10, 6, 22, 30, peau, 4, .5); ell(RX - 14, 4, 20, 28, peau, 4, -.5);
-    if (nu) for (let i = 0; i < 12; i++) A.circle(-50 + (i * 37) % 100, -30 + (i * 23) % 60, 2, '#e8b090', 0);
+    // cou et tête (cou nu), crête et barbillons rouges, bec jaune, œil fermé
+    ln([[-RX + 24, -18], [-RX - 6, -44]], 30, COL.ink); ln([[-RX + 24, -18], [-RX - 6, -44]], 23, peau);
+    const hx = -RX - 12, hy = -56;
+    [[-10, -22], [0, -27], [10, -22]].forEach(([a, b]) => A.circle(hx + a, hy + b, 8, COL.red, 3));
+    A.circle(hx, hy, 20, peau, 4);
+    ctx.beginPath(); ctx.moveTo(hx - 16, hy - 4); ctx.lineTo(hx - 34, hy + 3); ctx.lineTo(hx - 16, hy + 9); ctx.closePath(); ctx.fillStyle = '#ffc21f'; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke();
+    ell(hx - 12, hy + 18, 6, 9, COL.red, 3);
+    ctx.beginPath(); ctx.arc(hx - 3, hy - 4, 5, Math.PI * .15, Math.PI * .85); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke();
+    if (nu) for (let i = 0; i < 14; i++) A.circle(-56 + (i * 37) % 110, -34 + (i * 23) % 66, 2, '#e8b090', 0);
     ctx.restore();
   }
+  // une vraie plume : pointue, avec sa tige au milieu et ses barbes
   function plume(f, k = 1){
-    ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(f.r);
-    if (f.q || f.big){ ell(10 * k, 0, 18 * k, 6 * k, f.c, 2); ln([[-8 * k, 0], [26 * k, 0]], 1.5, '#9a7a4a'); }
-    else ell(0, 0, 9 * k, 5.5 * k, f.c, 1.5);
+    const L = (f.L || 24) * k, big = !!f.big, W = L * (big ? .2 : .36);
+    ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(f.r + (f.q === 1 ? Math.sin(G.t * 30) * .08 : 0));
+    if (!big) ctx.translate(-L * .3, 0);
+    ctx.beginPath(); ctx.moveTo(0, 0);
+    ctx.bezierCurveTo(L * .15, -W * 1.15, L * .7, -W * .95, L, 0);
+    ctx.bezierCurveTo(L * .72, W * .8, L * .2, W * 1.0, 0, 0);
+    ctx.fillStyle = f.c; ctx.fill(); ctx.lineWidth = big ? 2 : 1.4; ctx.strokeStyle = COL.ink; ctx.stroke();
+    ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(29,21,48,.3)';
+    for (let i = 1; i <= 3; i++){ const t = i / 4, xx = L * t, h = 1 - t * .35;
+      ctx.beginPath(); ctx.moveTo(xx, 0); ctx.lineTo(xx + L * .12, -W * .75 * h); ctx.moveTo(xx + L * .05, 0); ctx.lineTo(xx + L * .17, W * .65 * h); ctx.stroke(); }
+    ln([[-L * .08, 0], [L * .92, 0]], big ? 2 : 1.3, 'rgba(255,240,210,.9)');
     ctx.restore();
   }
   // le duvet sous les plumes : il disparaît en même temps qu'elles
-  function duvet(pl){ ctx.fillStyle = '#fff4e0'; pl.forEach(f => { if (!f.q){ ctx.beginPath(); ctx.arc(f.x, f.y, 12, 0, Math.PI * 2); ctx.fill(); } }); }
+  function duvet(pl){ ctx.fillStyle = '#f3d9b0'; pl.forEach(f => { if (!f.big){ ctx.beginPath(); ctx.arc(f.x, f.y, 11, 0, Math.PI * 2); ctx.fill(); } }); }
   function odeur(){
     // ça sent fort : des volutes vertes qui montent
     for (let i = 0; i < 3; i++){
@@ -4315,7 +4346,7 @@ pseudoShow(scene === 'name');
     odeur();
     // les poulets servis qui volent jusqu'à l'assiette
     G.serve.forEach(s => { const k = Math.min(1, s.t / .4), e = 1 - (1 - k) * (1 - k); poulet(PX + (SEATS[s.to] - PX) * e, PY + (TABLE + 10 - PY) * e - Math.sin(k * Math.PI) * 60, 1 - .8 * e, true); });
-    G.vols.forEach(v => plume(v, v.big ? .8 : 1));
+    G.vols.forEach(v => plume(v));
     // HUD : plumes, barre de temps
     A.bigNum(String(G.score), 196, 46, 50, { align: 'right' });
     A.txt('plumes', 206, 58, 22, COL.white, { lw: 6, align: 'left' });
@@ -4336,10 +4367,11 @@ pseudoShow(scene === 'name');
     gens(); table();
     ctx = c; c.fillStyle = '#c98a5a'; c.fillRect(-200, TABLE + 64, 760, 400);
     const VY = 470;
-    poulet(PX, VY, .62, false);
-    const pv = []; for (let i = 0; i < 30; i++){ const a = i * 2.4, r = (i % 7) / 7; pv.push({ x: PX + Math.cos(a) * r * 50, y: VY - 6 + Math.sin(a) * r * 34, r: a, c: i % 3 ? '#fffaf0' : '#efdcb4', q: 0 }); }
-    duvet(pv); pv.forEach(f => plume(f, .8));
-    const ph = (t * .8) % 1; plume({ x: PX + 54, y: VY - 30 - ph * 50, r: t * 3, c: '#fffaf0', q: 0 }, 1.2);
+    if (!VIG) VIG = genPlumes();
+    c.save(); c.translate(PX, VY); c.scale(.6, .6); c.translate(-PX, -PY);
+    poulet(PX, PY, 1, false); duvet(VIG); VIG.forEach(f => plume(f));
+    c.restore();
+    const ph = (t * .8) % 1; plume({ x: PX + 56, y: VY - 34 - ph * 50, r: t * 2, c: '#c8823c', L: 26 }, 1.2);
     c.restore();
     c.restore(); G = save;
   }
@@ -4347,7 +4379,7 @@ pseudoShow(scene === 'name');
     id: 'poulet', titre: 'Kadour et le poulet Zifr', court: 'Le poulet Zifr',
     consigne: 'Tape vite sur le poulet, avec tous tes doigts, pour enlever toutes ses plumes. Il faut servir les 5 avant la fin du temps !',
     plusPetitGagne: false,
-    seuils: { S: 450, A: 360, B: 270, C: 180, D: 90 },
+    seuils: { S: 800, A: 640, B: 480, C: 320, D: 160 },        // 160 plumes par poulet
     format: n => Math.max(0, Math.round(n)) + ' plumes',
     musique: 'jeu', vignette,
     start(){ ctx = A.ctx(); nouvellePartie(); },
