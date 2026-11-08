@@ -4096,6 +4096,266 @@ pseudoShow(scene === 'name');
 })();
 
 </script>
+<script>
+'use strict';
+// =====================================================================
+//  ÉPREUVE 16 — KADOUR ET LE POULET ZIFR
+//  Kadour (au milieu) et ses 4 femmes attendent à table. Taper (avec tous
+//  ses doigts, partout) pour déplumer le poulet « zifr » (il sent fort).
+//  90 plumes par poulet : 80 petites (1 tape) + 10 de la queue (2 tapes).
+//  Poulet fini = servi (Kadour d'abord, puis les femmes de gauche à droite).
+//  30 s. À la fin, celles et celui qui n'ont pas eu de poulet se plaignent.
+//  Score = plumes enlevées (5 poulets = 450 = rang S ; ensuite du rab).
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const { drawPerson } = Bourdi.persos;
+  const DUREE = 30;                          // secondes
+  const PETITES = 80, QUEUE = 10;            // 80 + 10×2 = 100 tapes par poulet
+  const PX = 180, PY = 540, RX = 92, RY = 66; // le poulet sur la planche
+  const SEATS = [44, 112, 180, 248, 316];    // de gauche à droite ; Kadour au milieu
+  const ORDRE = [2, 0, 1, 3, 4];             // Kadour d'abord, puis les femmes de gauche à droite
+  const SY = 360, SS = .55;                  // les gens assis : bas et taille
+  const TABLE = 334;
+  const TXT_OUI = 'Bien Zifr !', TXT_NON = 'Oh non, j\'ai pas eu de poulet !';
+
+  // Kadour : petite calvitie, cheveux un peu longs sur les côtés. Les 4 femmes : chacune sa coiffure.
+  const GENS = [
+    { kind: 'empty', skin: '#e8b48a', hair: '#2a1a12', shirt: '#ff7ab8', pants: '#5b3a29', style: 'chignon' },
+    { kind: 'empty', skin: '#c98a5a', hair: '#1a1210', shirt: COL.green, pants: '#3a4a8a', style: 'long' },
+    { kind: 'empty', skin: '#d9a072', hair: '#3a2a20', shirt: '#f4f1e8', pants: '#2f2a3d', style: 'kadour' },
+    { kind: 'empty', skin: '#f2c294', hair: '#6a3a1a', shirt: COL.violet, pants: '#5b3a29', style: 'boucles' },
+    { kind: 'empty', skin: '#b8784c', hair: '#2a1a12', shirt: COL.orange, pants: '#3a4a8a', style: 'frange' }
+  ];
+
+  function ln(pts, w, c){ ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.lineWidth = w; ctx.strokeStyle = c; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke(); }
+  function ell(x, y, rx, ry, fill, lw = 3, rot = 0){ ctx.beginPath(); ctx.ellipse(x, y, Math.max(1, rx), Math.max(1, ry), rot, 0, Math.PI * 2); if (fill){ ctx.fillStyle = fill; ctx.fill(); } if (lw){ ctx.lineWidth = lw; ctx.strokeStyle = COL.ink; ctx.stroke(); } }
+
+  let G;
+  function nouveauPoulet(){
+    const pl = [];
+    for (let i = 0; i < PETITES; i++){
+      // réparties sur le corps (un peu plus serrées vers le haut)
+      let x, y; do { x = (Math.random() * 2 - 1); y = (Math.random() * 2 - 1); } while (x * x + y * y > .86);
+      pl.push({ x: PX + x * RX * .95 - 6, y: PY + y * RY * .92 - 8, r: (Math.random() - .5) * 1.4 + (x > 0 ? .4 : -.4), c: Math.random() < .7 ? '#fffaf0' : '#efdcb4', q: 0 });
+    }
+    for (let i = 0; i < QUEUE; i++){
+      const a = -.9 + i * (1.6 / (QUEUE - 1));
+      pl.push({ x: PX + RX * .88 + Math.cos(a) * 22, y: PY - 14 + Math.sin(a) * 26, r: a, c: i % 2 ? '#c99a5b' : '#e8d2a8', q: 2 });
+    }
+    pl.sort((p, q) => p.q - q.q || p.y - q.y);
+    G.poulet = { pl, arr: 0 };
+  }
+  function nouvellePartie(){
+    G = { t: 0, count: -1.2, play: 0, score: 0, servis: [0, 0, 0, 0, 0], n: 0, vols: [], serve: [], end: 0, poulet: null, fini: false, bulles: 0 };
+    nouveauPoulet();
+  }
+
+  const snd = {
+    count(go){ A.tone(0, go ? 1046 : 523, go ? .3 : .12, .08, 'square'); },
+    plume(){ A.bruit(0, .05, .12, 'highpass', 3200 + Math.random() * 1500, 1); },
+    tire(){ A.tone(0, 300, .06, .05, 'triangle', 200); },
+    sert(){ A.tone(0, 784, .1, .07, 'triangle'); A.tone(.09, 1175, .16, .07, 'triangle'); A.bruit(0, .15, .1, 'bandpass', 900, 2); },
+    content(){ [0, .1, .2].forEach((d, i) => A.tone(d, 660 + i * 220, .18, .07, 'triangle')); },
+    rale(){ A.tone(0, 220, .4, .06, 'sawtooth', 160); }
+  };
+
+  function tape(p){
+    if (G.count < 0 || G.end) return;
+    const pl = G.poulet.pl; if (!pl.length) return;
+    // la plume la plus proche du doigt (si on tape à côté, la plus proche quand même)
+    let bi = 0, bd = 1e9;
+    for (let i = 0; i < pl.length; i++){ const d = (pl[i].x - p.x) ** 2 + (pl[i].y - p.y) ** 2; if (d < bd){ bd = d; bi = i; } }
+    const f = pl[bi];
+    if (f.q === 2){ f.q = 1; f.r += .35; snd.tire(); return; }              // grande plume : il faut tirer deux fois
+    pl.splice(bi, 1); G.score++; snd.plume();
+    if (G.vols.length > 70) G.vols.shift();
+    G.vols.push({ x: f.x, y: f.y, vx: (Math.random() - .5) * 260, vy: -160 - Math.random() * 200, r: f.r, vr: (Math.random() - .5) * 10, c: f.c, big: f.q !== 0 || f.big, t: 0 });
+    if (!pl.length) servir();
+  }
+  function servir(){
+    const who = G.n < 5 ? ORDRE[G.n] : 2;                                   // après les 5 : du rab pour Kadour
+    G.n++; G.servis[who]++;
+    G.serve.push({ t: 0, to: who });
+    snd.sert(); A.particules(PX, PY, 18, { speed: 260 });
+    nouveauPoulet();
+  }
+
+  function update(dt){
+    G.t += dt;
+    G.vols.forEach(v => { v.t += dt; v.vy += 380 * dt; v.vx *= Math.pow(.3, dt); v.vy = Math.min(v.vy, 120); v.x += v.vx * dt + Math.sin(v.t * 6 + v.r) * 30 * dt; v.y += v.vy * dt; v.r += v.vr * dt; });
+    G.vols = G.vols.filter(v => v.y < 760 && v.t < 3);
+    G.serve.forEach(s => s.t += dt); G.serve = G.serve.filter(s => s.t < .45);
+    if (G.poulet) G.poulet.arr = Math.min(1, G.poulet.arr + dt * 6);
+    if (G.count < 0){ const b = Math.ceil(-G.count / .4); G.count += dt; const a = Math.ceil(-G.count / .4); if (a !== b) snd.count(a === 0); if (G.count >= 0) G.count = 0; return; }
+    if (G.end){
+      G.bulles = Math.min(5, G.bulles + dt * 6);
+      if (G.end > 0 && G.t - G.end > 3.8){ G.end = -1; A.fin({ score: G.score }); }
+      return;
+    }
+    G.play += dt;
+    if (G.play >= DUREE){
+      G.end = G.t; G.fini = true;
+      if (G.n >= 5){ snd.content(); A.particules(180, 260, 50, { speed: 340 }); } else snd.rale();
+    }
+  }
+
+  // ---------- Dessin ----------
+  function decor(){
+    // salle à manger : papier peint à rayures, fenêtre
+    ctx.fillStyle = '#ffe9c2'; ctx.fillRect(-200, -100, 760, 520);
+    ctx.fillStyle = '#ffdca3'; for (let x = -200; x < 560; x += 36) ctx.fillRect(x, -100, 16, 520);
+    A.blob(232, 118, 96, 76, 6, '#bfeaff', 4); ln([[280, 118], [280, 194]], 4, COL.ink); ln([[232, 156], [328, 156]], 4, COL.ink);
+    A.blob(32, 128, 70, 56, 4, '#fff6e0', 4); A.circle(67, 156, 16, COL.orange, 3);   // un cadre
+  }
+  // les cheveux spéciaux, dessinés derrière la tête
+  function cheveuxDerriere(g, x, y){
+    const hx = x, hy = y + SS * (-40 - 98), hr = 29 * SS;
+    if (g.style === 'long'){ A.blob(hx - hr * 1.15, hy - hr * .9, hr * 2.3, hr * 3, hr, g.hair, 3); }
+    if (g.style === 'kadour'){ A.blob(hx - hr * 1.18, hy - hr * .35, hr * .7, hr * 1.7, hr * .3, g.hair, 3); A.blob(hx + hr * .48, hy - hr * .35, hr * .7, hr * 1.7, hr * .3, g.hair, 3); }
+  }
+  function cheveuxDevant(g, x, y){
+    const hx = x, hy = y + SS * (-40 - 98), hr = 29 * SS;
+    if (g.style === 'long'){ ctx.beginPath(); ctx.arc(hx, hy, hr, Math.PI * 1.05, Math.PI * 1.95); ctx.quadraticCurveTo(hx, hy - hr * .35, hx - hr * .99, hy - hr * .3); ctx.fillStyle = g.hair; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = COL.ink; ctx.stroke(); }
+    if (g.style === 'kadour'){
+      // couronne de cheveux sur les côtés, le haut du crâne dégarni (avec un petit reflet)
+      ctx.beginPath(); ctx.arc(hx, hy, hr, Math.PI * 1.02, Math.PI * 1.3); ctx.lineWidth = 5; ctx.strokeStyle = g.hair; ctx.lineCap = 'round'; ctx.stroke();
+      ctx.beginPath(); ctx.arc(hx, hy, hr, Math.PI * 1.7, Math.PI * 1.98); ctx.stroke();
+      ell(hx - hr * .3, hy - hr * .62, hr * .22, hr * .12, 'rgba(255,255,255,.55)', 0, -.4);
+      ln([[hx - hr * .45, hy + hr * .42], [hx + hr * .45, hy + hr * .42]], 3.5, g.hair);         // moustache
+    }
+  }
+  function gens(){
+    for (let i = 0; i < 5; i++){
+      const g = GENS[i], x = SEATS[i], y = SY;
+      const expr = G.fini ? (G.servis[i] ? 'grin' : 'sad') : G.servis[i] ? 'smile' : (Math.sin(G.t * 1.3 + i) > .6 ? 'shock' : 'smile');
+      cheveuxDerriere(g, x, y);
+      drawPerson(g, x, y, SS, G.t + i, { sit: true, expr });
+      cheveuxDevant(g, x, y);
+    }
+  }
+  function table(){
+    A.blob(-20, TABLE, 400, 64, 10, '#fff', 4);
+    ctx.save(); A.rr(-20, TABLE, 400, 64, 10); ctx.clip();
+    ctx.fillStyle = 'rgba(255,59,59,.35)'; for (let x = -20; x < 380; x += 32) ctx.fillRect(x, TABLE, 16, 64); for (let y = TABLE; y < TABLE + 64; y += 32) ctx.fillRect(-20, y, 400, 16);
+    ctx.restore();
+    SEATS.forEach((x, i) => {
+      ell(x, TABLE + 16, 28, 9, '#f6f6fa', 3); ell(x, TABLE + 16, 17, 5, null, 2);
+      for (let k = 0; k < Math.min(3, G.servis[i]); k++) poulet(x + (k - (Math.min(3, G.servis[i]) - 1) / 2) * 10, TABLE + 10 - k * 3, .2, true);
+    });
+  }
+  function poulet(x, y, s, nu){
+    ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+    const peau = '#ffd9bf';
+    // cuisses
+    [-1, 1].forEach(d => { ell(d * 46, 44, 30, 22, peau, 4, d * .5); ln([[d * 62, 56], [d * 80, 70]], 11, COL.ink); ln([[d * 62, 56], [d * 80, 70]], 6, '#fff'); A.circle(d * 82, 72, 6, '#fff', 3); });
+    // corps
+    ell(0, 0, RX, RY, peau, 4);
+    ell(-24, -26, 34, 16, 'rgba(255,255,255,.4)', 0, -.2);
+    // ailes
+    ell(-RX + 10, 6, 22, 30, peau, 4, .5); ell(RX - 14, 4, 20, 28, peau, 4, -.5);
+    if (nu) for (let i = 0; i < 12; i++) A.circle(-50 + (i * 37) % 100, -30 + (i * 23) % 60, 2, '#e8b090', 0);
+    ctx.restore();
+  }
+  function plume(f, k = 1){
+    ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(f.r);
+    if (f.q || f.big){ ell(10 * k, 0, 18 * k, 6 * k, f.c, 2); ln([[-8 * k, 0], [26 * k, 0]], 1.5, '#9a7a4a'); }
+    else ell(0, 0, 9 * k, 5.5 * k, f.c, 1.5);
+    ctx.restore();
+  }
+  // le duvet sous les plumes : il disparaît en même temps qu'elles
+  function duvet(pl){ ctx.fillStyle = '#fff4e0'; pl.forEach(f => { if (!f.q){ ctx.beginPath(); ctx.arc(f.x, f.y, 12, 0, Math.PI * 2); ctx.fill(); } }); }
+  function odeur(){
+    // ça sent fort : des volutes vertes qui montent
+    for (let i = 0; i < 3; i++){
+      const x0 = PX - 50 + i * 50, ph = (G.t * .6 + i * .33) % 1;
+      ctx.save(); ctx.globalAlpha = Math.sin(ph * Math.PI) * .85;
+      ctx.beginPath();
+      for (let k = 0; k <= 12; k++){ const yy = PY - RY - 20 - ph * 50 - k * 6, xx = x0 + Math.sin(k * .8 + G.t * 4 + i) * 8; k ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy); }
+      ctx.lineWidth = 6; ctx.strokeStyle = '#7ad81e'; ctx.lineCap = 'round'; ctx.stroke();
+      ctx.lineWidth = 2.5; ctx.strokeStyle = '#3fa535'; ctx.stroke();
+      ctx.restore();
+    }
+  }
+  function planche(){
+    ctx.fillStyle = '#c98a5a'; ctx.fillRect(-200, TABLE + 64, 760, 400);
+    ln([[-200, TABLE + 64], [560, TABLE + 64]], 4, COL.ink);
+    A.blob(40, PY - 96, 280, 200, 40, '#e8b070', 4);
+    ln([[70, PY - 70], [300, PY - 74]], 3, '#c98a50'); ln([[66, PY + 60], [290, PY + 64]], 3, '#c98a50');
+    A.circle(302, PY - 76, 8, '#c98a5a', 3);
+  }
+  function bulles(){
+    const n = Math.floor(G.bulles);
+    for (let i = 0; i < n; i++){
+      const ok = G.servis[i] > 0, s = ok ? TXT_OUI : TXT_NON;
+      const bw = 112, ls = A.wrap(s, bw - 14, 15), bh = 14 + ls.length * 17;
+      const row = i % 2 ? 1 : 0, hx = SEATS[i], top = SY + SS * (-40 - 98) - 18 * SS * 2;
+      const by = (row ? 204 : 132) - (ls.length - 1) * 8;
+      const bx = Math.max(4, Math.min(356 - bw, hx - bw / 2));
+      ctx.beginPath(); ctx.moveTo(hx - 8, by + bh - 2); ctx.lineTo(hx, Math.min(top, by + bh + 22)); ctx.lineTo(hx + 8, by + bh - 2); ctx.closePath();
+      ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke();
+      A.blob(bx, by, bw, bh, 12, '#fff', 3);
+      ls.forEach((l, k) => A.txt(l, bx + bw / 2, by + 15 + k * 17, 15, ok ? '#2f8f3a' : COL.red, { lw: 0, max: bw - 10 }));
+    }
+  }
+  function draw(){
+    ctx = A.ctx();
+    decor();
+    gens();
+    table();
+    planche();
+    // le poulet en cours, qui arrive en glissant
+    const pt = G.poulet, ox = (1 - pt.arr) * 260;
+    ctx.save(); ctx.translate(ox, 0);
+    poulet(PX, PY, 1, false);
+    duvet(pt.pl);
+    pt.pl.forEach(f => plume(f));
+    ctx.restore();
+    odeur();
+    // les poulets servis qui volent jusqu'à l'assiette
+    G.serve.forEach(s => { const k = Math.min(1, s.t / .4), e = 1 - (1 - k) * (1 - k); poulet(PX + (SEATS[s.to] - PX) * e, PY + (TABLE + 10 - PY) * e - Math.sin(k * Math.PI) * 60, 1 - .8 * e, true); });
+    G.vols.forEach(v => plume(v, v.big ? .8 : 1));
+    // HUD : plumes, barre de temps
+    A.bigNum(String(G.score), 196, 46, 50, { align: 'right' });
+    A.txt('plumes', 206, 58, 22, COL.white, { lw: 6, align: 'left' });
+    const left = Math.max(0, 1 - G.play / DUREE);
+    A.blob(30, 86, 300, 18, 9, '#fff', 4); if (left > 0){ A.rr(34, 90, 292 * left, 10, 5); ctx.fillStyle = left < .2 ? COL.red : COL.violet; ctx.fill(); }
+    if (G.fini) bulles();
+    if (G.count < 0){ const n = Math.ceil(-G.count / .4), fr = (-G.count % .4) / .4;
+      ctx.save(); ctx.translate(180, 470); const s = .7 + fr * .6; ctx.scale(s, s); A.bigNum(String(n), 0, 0, 120); ctx.restore(); }
+  }
+  function down(p){ tape(p); }
+  function vignette(c, x, y, w, h, t){
+    ctx = c; const k = h / 230;
+    const save = G;
+    G = { t, servis: [0, 0, 0, 0, 0], fini: false };
+    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-150, -230);
+    c.fillStyle = '#ffe9c2'; c.fillRect(-200, -50, 700, 400);
+    c.save(); c.translate(150, 118); c.scale(.86, .86); c.translate(-180, -372);
+    gens(); table();
+    ctx = c; c.fillStyle = '#c98a5a'; c.fillRect(-200, TABLE + 64, 760, 400);
+    const VY = 470;
+    poulet(PX, VY, .62, false);
+    const pv = []; for (let i = 0; i < 30; i++){ const a = i * 2.4, r = (i % 7) / 7; pv.push({ x: PX + Math.cos(a) * r * 50, y: VY - 6 + Math.sin(a) * r * 34, r: a, c: i % 3 ? '#fffaf0' : '#efdcb4', q: 0 }); }
+    duvet(pv); pv.forEach(f => plume(f, .8));
+    const ph = (t * .8) % 1; plume({ x: PX + 54, y: VY - 30 - ph * 50, r: t * 3, c: '#fffaf0', q: 0 }, 1.2);
+    c.restore();
+    c.restore(); G = save;
+  }
+  Bourdi.ajouter({
+    id: 'poulet', titre: 'Kadour et le poulet Zifr', court: 'Le poulet Zifr',
+    consigne: 'Tape vite sur le poulet, avec tous tes doigts, pour enlever toutes ses plumes. Il faut servir les 5 avant la fin du temps !',
+    plusPetitGagne: false,
+    seuils: { S: 450, A: 360, B: 270, C: 180, D: 90 },
+    format: n => Math.max(0, Math.round(n)) + ' plumes',
+    musique: 'jeu', vignette,
+    start(){ ctx = A.ctx(); nouvellePartie(); },
+    update, draw, down, etat: () => G
+  });
+})();
+
+</script>
 <!-- FIN -->
 <script>Bourdi.demarrer();</script>
 
