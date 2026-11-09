@@ -356,7 +356,7 @@ const Music = (() => {
   function kick(t){ const o = actx.createOscillator(), g = actx.createGain(); o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(45, t + .12);
     g.gain.setValueAtTime(.35, t); g.gain.exponentialRampToValueAtTime(.0001, t + .15); o.connect(g).connect(musicBus); o.start(t); o.stop(t + .2); }
   function tick(){
-    if (!actx) return;
+    if (!actx || song === 'aucune') return;          // 'aucune' : l'épreuve fait sa propre musique (rythme)
     const S = SONGS[song], st = 60 / S.bpm / 4;
     if (next < actx.currentTime - .5) next = actx.currentTime + .05;
     while (next < actx.currentTime + .2){
@@ -5036,6 +5036,176 @@ pseudoShow(scene === 'name');
     musique: 'jeu', vignette,
     start(){ ctx = A.ctx(); nouvellePartie(); },
     update, draw, down, move, up, etat: () => G
+  });
+})();
+
+</script>
+<script>
+'use strict';
+// =====================================================================
+//  ÉPREUVE 20 — PLANTER LES OLIVIERS   (EN TEST : textes provisoires)
+//  Rythme : la musique est fabriquée ici, calée sur l'horloge du son.
+//  Un rond se resserre sur le trou : taper quand il touche le bord.
+//  Un olivier = 4 temps (pioche, pioche, poser, tasser). 12 oliviers,
+//  la musique accélère ; les 4 derniers ont des pièges (silence où il ne
+//  faut pas taper, contretemps).
+//  Score = précision en %.
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const N = 12, PARFAIT = .07, BIEN = .14, FENETRE = .2;
+  const PIEGES = [[0, 1, 3, 4, 5], [0, 1, 1.5, 3, 4], [0, .5, 2, 3, 4], [0, 1, 1.5, 3, 4]];   // offsets des 4 gestes + longueur (en temps)
+  const PY = 470;                                                   // le trou à l'écran
+  const now = () => (typeof actx !== 'undefined' && actx) ? actx.currentTime : performance.now() / 1000;
+
+  function ln(pts, w, c){ ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.lineWidth = w; ctx.strokeStyle = c; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke(); }
+  function ell(x, y, rx, ry, fill, lw = 3, rot = 0){ ctx.beginPath(); ctx.ellipse(x, y, Math.max(1, rx), Math.max(1, ry), rot, 0, Math.PI * 2); if (fill){ ctx.fillStyle = fill; ctx.fill(); } if (lw){ ctx.lineWidth = lw; ctx.strokeStyle = COL.ink; ctx.stroke(); } }
+
+  // ---------- la partition : temps de musique et gestes à faire ----------
+  function partition(){
+    const beats = [], ev = []; let t = 0;
+    const b92 = 60 / 92;
+    for (let i = 0; i < 4; i++){ beats.push({ t, k: 'decompte', i }); t += b92; }          // 4 temps pour se caler
+    for (let o = 0; o < N; o++){
+      const bpm = 92 + o * 4, b = 60 / bpm, piege = o >= N - 4 ? PIEGES[o - (N - 4)] : null;
+      const offs = piege ? piege.slice(0, 4) : [0, 1, 2, 3], len = piege ? piege[4] : 4;
+      for (let i = 0; i < len; i++) beats.push({ t: t + i * b, k: offs.includes(i) ? 'geste' : 'silence', o, b });
+      offs.forEach((d, g) => ev.push({ t: t + d * b, o, g, b, note: null, contre: d % 1 !== 0 }));
+      // les contretemps : un petit bruit de castagnette sur le demi-temps quand un geste y tombe
+      offs.forEach(d => { if (d % 1) beats.push({ t: t + d * b, k: 'contre', o, b }); });
+      t += len * b;
+    }
+    beats.sort((a, c) => a.t - c.t);
+    return { beats, ev, fin: t + .6 };
+  }
+
+  let G;
+  function nouvellePartie(){
+    const P = partition();
+    G = { t: 0, count: -1.2, a0: null, play: 0, beats: P.beats, ev: P.ev, fin: P.fin, bi: 0, extra: 0, oliviers: Array.from({ length: N }, () => ({ notes: [], g: 0 })), cam: 0, end: 0, score: 0, flash: 0 };
+  }
+
+  // ---------- la musique (air joyeux : basse, mandoline, castagnettes) ----------
+  const GAMME = [57, 60, 64, 62, 65, 64, 62, 60, 59, 62, 64, 69];
+  const ROOTS = [45, 50, 52, 45];
+  function joue(be, d){
+    const o = be.o == null ? 0 : be.o, root = ROOTS[Math.floor(o / 3) % 4];
+    if (be.k === 'decompte'){ A.tone(d, be.i === 3 ? 1320 : 880, .06, .07, 'square'); return; }
+    if (be.k === 'contre'){ A.bruit(d, .04, .14, 'highpass', 5000, 1); return; }
+    A.tone(d, 440 * Math.pow(2, (root - 12 - 69) / 12), be.b * .9, .16, 'triangle');                 // basse
+    if (be.k === 'geste'){
+      const m = GAMME[(o * 3 + Math.round(be.t * 7)) % GAMME.length];
+      for (let i = 0; i < 3; i++) A.tone(d + i * .045, 440 * Math.pow(2, (m - 69) / 12), .05, .05, 'square');   // mandoline (trémolo)
+    }
+    A.bruit(d + be.b / 2, .03, .09, 'highpass', 6000, 1);                                           // castagnette sur le demi-temps
+  }
+
+  const snd = {
+    count(go){ A.tone(0, go ? 1046 : 523, go ? .3 : .12, .08, 'square'); },
+    geste(g, q){ if (g < 2){ A.bruit(0, .07, .3 * q + .1, 'lowpass', 700, 1); A.tone(0, 160, .06, .08, 'square', 90); } else if (g === 2) A.bruit(0, .12, .2, 'bandpass', 600, 1); else { A.tone(0, 90, .12, .2, 'sine', 50); } },
+    rate(){ A.tone(0, 200, .15, .06, 'sawtooth', 140); }
+  };
+
+  function update(dt){
+    G.t += dt; G.flash = Math.max(0, G.flash - dt * 4);
+    if (G.count < 0){ G.count += dt; if (G.count >= 0){ G.count = 0; G.a0 = now() + .25; } return; }
+    G.play = now() - G.a0;
+    // programmer la musique un peu en avance, sur l'horloge du son
+    while (G.bi < G.beats.length && G.beats[G.bi].t < G.play + .15){ const be = G.beats[G.bi++]; joue(be, Math.max(0, be.t - G.play)); }
+    // gestes ratés (pas tapés à temps)
+    G.ev.forEach(e => { if (e.note == null && G.play > e.t + FENETRE){ e.note = 0; noter(e); } });
+    // la caméra suit l'olivier en cours
+    const cur = G.ev.find(e => e.note == null), oc = cur ? cur.o : N - 1;
+    G.cam += (oc * 130 - G.cam) * Math.min(1, dt * 6);
+    if (G.end){ if (G.end > 0 && G.t - G.end > 2){ G.end = -1; A.fin({ score: G.score }); } return; }
+    if (G.play > G.fin){
+      const tot = G.ev.reduce((s, e) => s + e.note, 0);
+      G.score = Math.max(0, Math.round((tot - G.extra * .5) / G.ev.length * 100));
+      G.end = G.t; A.sons.bien();
+    }
+  }
+  function noter(e){ const ol = G.oliviers[e.o]; ol.notes.push(e.note); ol.g = Math.max(ol.g, e.g + 1); }
+  function down(){
+    if (G.count < 0 || G.end || G.a0 == null) return;
+    const t = now() - G.a0;
+    let best = null, bd = 1e9;
+    G.ev.forEach(e => { if (e.note == null){ const d = Math.abs(t - e.t); if (d < bd){ bd = d; best = e; } } });
+    if (!best || bd > FENETRE){ G.extra++; snd.rate(); A.secousse(3, .1); return; }        // tapé dans le vide (ou dans un silence)
+    best.note = bd <= PARFAIT ? 1 : bd <= BIEN ? .6 : .2;
+    noter(best); snd.geste(best.g, best.note);
+    if (best.note === 1){ G.flash = 1; if (best.g === 3) A.dire('Parfait !'); }
+    A.particules(180, PY, best.note === 1 ? 10 : 4, { colors: ['#b8763a', '#8a5a22', '#d8b88a'], speed: 140 });
+  }
+
+  // ---------- Dessin ----------
+  function olivier(x, y, k, q, t){
+    // k : 0..1 taille ; q : qualité (1 = bien droit et vert, 0 = rabougri)
+    const pen = (1 - q) * .35 * (Math.sin(x) > 0 ? 1 : -1);
+    ctx.save(); ctx.translate(x, y); ctx.rotate(pen); ctx.scale(k, k);
+    ln([[0, 0], [-4, -40], [4, -70]], 12, COL.ink); ln([[0, 0], [-4, -40], [4, -70]], 7, '#8a6a4a');
+    const f = q > .7 ? '#7a9a4a' : q > .4 ? '#9aa45a' : '#b0a070';
+    [[-22, -80, 22], [18, -84, 22], [0, -100, 24], [-30, -98, 16], [30, -102, 16]].forEach(([a, b, r]) => A.circle(a, b + Math.sin(t * 2 + a) * 1.5, r * (.6 + q * .4), f, 3));
+    if (q > .7) [[-14, -86], [10, -96], [24, -80]].forEach(([a, b]) => ell(a, b, 3, 4.5, '#3a3a5a', 0));
+    ctx.restore();
+  }
+  function draw(){
+    ctx = A.ctx();
+    const g = ctx.createLinearGradient(0, 0, 0, 420); g.addColorStop(0, '#ffcf7a'); g.addColorStop(1, '#ffe9c2');
+    ctx.fillStyle = g; ctx.fillRect(-200, -100, 760, 520);
+    A.circle(260, 200, 44, '#fff3a0', 4);
+    ctx.fillStyle = '#c8a46a'; ctx.beginPath(); ctx.moveTo(-200, 400); ctx.quadraticCurveTo(180, 340, 560, 400); ctx.lineTo(560, 900); ctx.lineTo(-200, 900); ctx.fill();
+    ctx.fillStyle = '#a8763a'; ctx.fillRect(-200, PY + 10, 760, 400); ln([[-200, PY + 10], [560, PY + 10]], 4, COL.ink);
+    // la rangée d'oliviers
+    const play = G.a0 == null ? -9 : now() - G.a0;
+    for (let o = 0; o < N; o++){
+      const x = 180 + o * 130 - G.cam; if (x < -80 || x > 440) continue;
+      const ol = G.oliviers[o], q = ol.notes.length ? ol.notes.reduce((a, b) => a + b, 0) / ol.notes.length : 1;
+      ell(x, PY + 12, 34, 9, ol.g >= 1 ? '#5a3a1a' : '#8a5a2a', 2.5);
+      if (ol.g >= 3) olivier(x, PY + 12, ol.g >= 4 ? 1 : .8, q, G.t + o);
+      if (ol.g >= 4) ell(x, PY + 14, 30, 6, '#7a4a1e', 2);
+    }
+    // le rond qui se resserre sur le prochain geste
+    const e = G.ev.find(v => v.note == null);
+    A.circle(180, PY, 30, null, 5, 'rgba(29,21,48,.5)');
+    if (e && play > -1){
+      const pre = e.b * 1.2, k = (e.t - play) / pre;
+      if (k <= 1 && k > -.3){ const r = 30 + Math.max(0, k) * 90; ctx.save(); ctx.globalAlpha = Math.min(1, (1 - k) * 2); A.circle(180, PY, r, null, 6, e.contre ? COL.orange : COL.yellow); ctx.restore(); }
+    }
+    if (G.flash > 0){ ctx.save(); ctx.globalAlpha = G.flash; A.circle(180, PY, 34, null, 8, COL.green); ctx.restore(); }
+    // le paysan et sa pioche
+    const gx = 92, gy = PY + 10, coup = G.flash > .5 ? 1 : 0;
+    ln([[gx, gy - 46], [gx - 6, gy]], 9, COL.ink); ln([[gx, gy - 46], [gx + 8, gy]], 9, COL.ink);
+    A.blob(gx - 14, gy - 96, 28, 52, 10, '#2f6bff', 3); A.circle(gx + 2, gy - 112, 16, '#f2c294', 3);
+    A.blob(gx - 16, gy - 132, 36, 10, 4, '#ffd21f', 3); A.blob(gx - 8, gy - 142, 20, 12, 5, '#ffd21f', 3);
+    ctx.save(); ctx.translate(gx + 10, gy - 80); ctx.rotate(coup ? .9 : -.6);
+    ln([[0, 0], [48, 0]], 6, '#8a5a22'); ln([[44, -14], [52, 14]], 7, '#6b707a'); ctx.restore();
+    // HUD : précision en cours
+    const notes = G.ev.filter(v => v.note != null), tot = notes.reduce((s, v) => s + v.note, 0);
+    const pc = notes.length ? Math.max(0, Math.round((tot - G.extra * .5) / notes.length * 100)) : 100;
+    A.bigNum(String(G.end ? G.score : pc), 196, 46, 50, { align: 'right' });
+    A.txt('%', 206, 58, 22, COL.white, { lw: 6, align: 'left' });
+    if (G.count < 0){ const n = Math.ceil(-G.count / .4), fr = (-G.count % .4) / .4;
+      ctx.save(); ctx.translate(180, 300); const s = .7 + fr * .6; ctx.scale(s, s); A.bigNum(String(n), 0, 0, 120); ctx.restore(); }
+  }
+  function vignette(c, x, y, w, h, t){
+    ctx = c; const k = h / 230;
+    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-150, -230);
+    c.fillStyle = '#ffe9c2'; c.fillRect(-200, -50, 700, 400); c.fillStyle = '#a8763a'; c.fillRect(-200, 190, 700, 100);
+    olivier(70, 192, 1, 1, t); olivier(170, 192, 1, 1, t + 1);
+    const r = 24 + ((1 - (t * 1.5) % 1)) * 50; A.circle(250, 186, 24, null, 4, 'rgba(29,21,48,.5)'); A.circle(250, 186, r, null, 5, COL.yellow);
+    c.restore();
+  }
+  Bourdi.ajouter({
+    id: 'oliviers', titre: 'Planter les oliviers', court: 'Les Oliviers',
+    consigne: 'Tape quand le rond touche le bord, en suivant la musique. Attention aux pièges à la fin !',
+    bientot: true,                 // en test (9 nov.) : textes provisoires à faire valider
+    plusPetitGagne: false,
+    seuils: { S: 95, A: 85, B: 72, C: 58, D: 40 },
+    format: n => Math.max(0, Math.round(n)) + ' %',
+    musique: 'aucune', vignette,
+    start(){ ctx = A.ctx(); nouvellePartie(); },
+    update, draw, down, etat: () => G
   });
 })();
 
