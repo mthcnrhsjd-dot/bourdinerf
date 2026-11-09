@@ -4425,6 +4425,247 @@ pseudoShow(scene === 'name');
 })();
 
 </script>
+<script>
+'use strict';
+// =====================================================================
+//  ÉPREUVE 17 — FERMER L'EAU DES VACHES
+//  L'abreuvoir se remplit. Le minuteur sonne au hasard (2 à 8 s) : DRING !
+//  À partir de là, l'eau déborde (3 litres par seconde). Taper pied gauche /
+//  pied droit en alternant (on commence avec le pied qu'on veut) pour courir
+//  jusqu'à la vanne ; deux fois le même pied = « Oups ! », on trébuche.
+//  Arrivé, taper la vanne : la poignée passe en travers du tuyau, l'eau s'arrête.
+//  Courir avant la sonnerie = « Trop tôt ! +2 s ».
+//  Score = litres perdus (en décilitres pour le classement), le plus petit gagne.
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const DEBIT = 3;                 // litres perdus par seconde après la sonnerie
+  const PAS = 40;                  // nombre de pas jusqu'à la vanne
+  const PENALITE = 2;              // faux départ (s)
+  const TREBUCHE = .45;            // temps perdu quand on se trompe de pied (s)
+  const GY = 520;                  // le sol
+  const X0 = 90, XV = 980;         // départ (devant la maison) et la vanne, dans le monde
+  const PX_PAS = (XV - 95 - X0) / PAS;
+  const FY = 600;                  // haut des deux zones de pieds
+  const CAM_MAX = XV + 190 - 360;  // à l'arrivée : la vanne, l'abreuvoir et les vaches sont à l'écran
+
+  function ln(pts, w, c){ ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.lineWidth = w; ctx.strokeStyle = c; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke(); }
+  function ell(x, y, rx, ry, fill, lw = 3, rot = 0){ ctx.beginPath(); ctx.ellipse(x, y, Math.max(1, rx), Math.max(1, ry), rot, 0, Math.PI * 2); if (fill){ ctx.fillStyle = fill; ctx.fill(); } if (lw){ ctx.lineWidth = lw; ctx.strokeStyle = COL.ink; ctx.stroke(); } }
+
+  let G;
+  function nouvellePartie(){
+    G = { t: 0, phase: 'attente', sonne: 2 + Math.random() * 6, attente: 0, chrono: 0, penal: 0, faux: false,
+      pas: 0, dernier: null, x: X0, stun: 0, jambe: 0, cam: 0, ferme: 0, end: 0, flaque: 0, meuh: 1.5, pied: { g: 0, d: 0 }, litres: 0 };
+  }
+  const litres = () => (G.chrono + G.penal) * DEBIT;
+
+  const snd = {
+    tic(){ A.tone(0, 1800, .02, .03, 'square'); },
+    dring(){ for (let i = 0; i < 10; i++) A.tone(i * .07, i % 2 ? 1500 : 1900, .06, .07, 'square'); },
+    pas(){ A.bruit(0, .05, .14, 'lowpass', 500, 1); },
+    oups(){ A.tone(0, 400, .25, .07, 'sine', 160); A.bruit(.12, .12, .2, 'lowpass', 300, 1); },
+    faux(){ A.sons.erreur(); },
+    meuh(){ const f = 120 + Math.random() * 40; A.tone(0, f, .7, .07, 'sawtooth', f * .75); },
+    vanne(){ A.tone(0, 900, .05, .08, 'square'); A.tone(.05, 600, .08, .06, 'square'); A.bruit(0, .1, .15, 'bandpass', 2000, 2); },
+    eau(){ A.bruit(0, .35, .05, 'bandpass', 1800, 1); }
+  };
+
+  function pied(cote){
+    G.pied[cote] = 1;
+    if (G.phase === 'attente'){
+      if (!G.faux){ G.faux = true; G.penal += PENALITE; snd.faux(); A.secousse(5, .2); A.texte('Trop tôt ! +2 s', 180, 300, { size: 30, color: COL.red, dur: 1.1 }); }
+      return;
+    }
+    if (G.phase !== 'course' || G.stun > 0) return;
+    if (G.dernier === cote){ G.stun = TREBUCHE; snd.oups(); A.texte('Oups !', 180, 330, { size: 32, color: COL.red, dur: .7 }); G.dernier = null; return; }
+    G.dernier = cote; G.pas++; G.jambe = cote === 'g' ? 1 : -1; snd.pas();
+    if (G.pas >= PAS){ G.phase = 'vanne'; }
+  }
+  function vanne(){
+    if (G.phase !== 'vanne' || G.x < XV - 99) return;           // il faut être arrivé
+    G.phase = 'fini'; G.end = G.t; G.ferme = 0; snd.vanne(); A.secousse(4, .15);
+    G.litres = litres(); A.particules(XV - G.cam, GY - 70, 14, { colors: ['#bfeaff', '#ffffff'], speed: 160 });
+  }
+
+  function update(dt){
+    G.t += dt;
+    G.pied.g = Math.max(0, G.pied.g - dt * 6); G.pied.d = Math.max(0, G.pied.d - dt * 6);
+    G.meuh -= dt; if (G.meuh <= 0 && G.phase !== 'fini'){ snd.meuh(); G.meuh = 2 + Math.random() * 2.5; }
+    if (G.phase === 'attente'){
+      const av = G.attente; G.attente += dt;
+      if (Math.floor(av * 2) !== Math.floor(G.attente * 2)) snd.tic();
+      if (G.attente >= G.sonne){ G.phase = 'course'; snd.dring(); A.secousse(8, .4); A.texte('DRING !', 180, 250, { size: 46, color: COL.yellow, dur: .9 }); }
+      return;
+    }
+    if (G.phase === 'fini'){
+      G.ferme = Math.min(1, G.ferme + dt * 6);
+      if (G.end > 0 && G.t - G.end > 1.6){ G.end = -1; A.fin({ score: Math.max(1, Math.round(G.litres * 10)) }); }
+      return;
+    }
+    G.chrono += dt;
+    G.flaque = Math.min(1, litres() / 60);
+    if (Math.random() < dt * 3) snd.eau();
+    if (G.stun > 0) G.stun -= dt;
+    // le coureur avance vers sa case (souple), la caméra suit
+    const cible = X0 + G.pas * PX_PAS;
+    G.x += (cible - G.x) * Math.min(1, dt * 14);
+    if (G.phase === 'vanne') G.x = Math.min(G.x, XV - 95);
+    G.cam = Math.max(0, Math.min(CAM_MAX, G.x - 75));
+  }
+
+  // ---------- Dessin ----------
+  function decor(){
+    const g = ctx.createLinearGradient(0, 0, 0, GY); g.addColorStop(0, '#3fb4ff'); g.addColorStop(1, '#cdf0ff');
+    ctx.fillStyle = g; ctx.fillRect(-200, -100, 760, GY + 100);
+    A.circle(300, 150, 30, '#ffe066', 4);
+    ctx.save(); ctx.translate(-G.cam * .3, 0);
+    ctx.fillStyle = '#8fd36a'; ctx.beginPath(); ctx.moveTo(-200, 430); ctx.quadraticCurveTo(200, 360, 500, 420); ctx.quadraticCurveTo(800, 370, 1300, 430); ctx.lineTo(1300, GY); ctx.lineTo(-200, GY); ctx.fill();
+    ctx.restore();
+    ctx.save(); ctx.translate(-G.cam, 0);
+    // la maison
+    A.blob(-120, 330, 200, 190, 6, '#fff3d6', 4);
+    ctx.beginPath(); ctx.moveTo(-136, 336); ctx.lineTo(-20, 250); ctx.lineTo(96, 336); ctx.closePath(); ctx.fillStyle = COL.red; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.stroke();
+    A.blob(20, 420, 50, 100, 4, '#9a5a2a', 4); A.circle(60, 470, 4, COL.yellow, 2);
+    A.blob(-90, 370, 60, 50, 4, '#bfeaff', 4);
+    // le chemin de terre et l'herbe
+    ctx.fillStyle = '#7cc84f'; ctx.fillRect(-200, GY, 1500, 80); ctx.fillStyle = '#d8b88a'; ctx.fillRect(-200, GY + 6, 1500, 30);
+    ln([[-200, GY], [1300, GY]], 4, COL.ink);
+    // la clôture du pré
+    for (let x = 700; x < 1400; x += 46) A.blob(x, GY - 70, 9, 70, 3, '#b8763a', 3);
+    ln([[700, GY - 54], [1400, GY - 54]], 5, '#b8763a'); ln([[700, GY - 28], [1400, GY - 28]], 5, '#b8763a');
+    // les vaches
+    vache(XV + 70, GY - 52, 1, G.t); vache(XV + 196, GY - 46, -1, G.t + 1.3);
+    // le tuyau, la vanne, l'abreuvoir
+    const tx = XV + 40, ty = GY - 62;
+    ln([[-100, GY + 50], [tx - 70, GY + 50], [tx - 70, ty], [tx + 30, ty]], 11, COL.ink); ln([[-100, GY + 50], [tx - 70, GY + 50], [tx - 70, ty], [tx + 30, ty]], 6, '#3a8a3a');
+    abreuvoir(tx + 34, GY);
+    poignee(tx - 70, ty);
+    ctx.restore();
+  }
+  function poignee(x, y){
+    // ouverte : le long du tuyau (horizontale) ; fermée : en travers (verticale)
+    A.blob(x - 12, y - 12, 24, 24, 6, '#9a8fb0', 3);
+    const a = G.ferme * Math.PI / 2;
+    ctx.save(); ctx.translate(x, y - 14); ctx.rotate(-a);
+    A.blob(-30, -6, 60, 12, 6, COL.red, 3);
+    ctx.restore();
+    A.circle(x, y - 14, 5, COL.ink, 0);
+    if (G.phase === 'vanne' && G.x > XV - 99 && Math.sin(G.t * 10) > 0) { ctx.save(); ctx.globalAlpha = .6; A.circle(x, y - 14, 40, null, 4, COL.yellow); ctx.restore(); }
+  }
+  function abreuvoir(x, gy){
+    const coule = G.phase !== 'fini', deb = G.phase === 'course' || G.phase === 'vanne';
+    // l'eau qui sort du tuyau
+    if (coule){ ctx.save(); ctx.globalAlpha = .85; ln([[x - 4, gy - 62], [x + 8, gy - 52 + Math.sin(G.t * 20) * 2], [x + 14, gy - 34]], 7, '#5ec8ff'); ctx.restore(); }
+    // la flaque qui grandit quand ça déborde
+    if (G.flaque > 0) ell(x + 40, gy + 6, 60 + G.flaque * 140, 6 + G.flaque * 10, 'rgba(94,200,255,.75)', 0);
+    A.blob(x - 10, gy - 44, 110, 44, 8, '#9aa4b0', 4);
+    const niv = G.phase === 'attente' ? Math.min(1, .55 + G.attente / Math.max(2, G.sonne) * .45) : 1;
+    ctx.save(); A.rr(x - 4, gy - 40, 98, 36, 6); ctx.clip();
+    ctx.fillStyle = '#5ec8ff'; ctx.fillRect(x - 4, gy - 4 - 36 * niv, 98, 40);
+    ctx.restore();
+    if (deb){ // ça déborde des deux côtés
+      for (let i = 0; i < 2; i++){ const sx = i ? x + 100 : x - 10, d = i ? 1 : -1, w = Math.sin(G.t * 14 + i) * 2;
+        ctx.save(); ctx.globalAlpha = .85; ln([[sx, gy - 44], [sx + d * (8 + w), gy - 26], [sx + d * 12, gy]], 6, '#5ec8ff'); ctx.restore(); }
+    }
+  }
+  function vache(x, y, d, t){
+    ctx.save(); ctx.translate(x, y); ctx.scale(d * .9, .9);
+    [[-30, 0], [-14, 0], [22, 0], [36, 0]].forEach(([a]) => A.blob(a - 5, -8, 10, 34, 3, '#fff', 3));
+    ell(0, -28, 52, 28, '#fff', 4);
+    ell(-18, -34, 12, 9, COL.ink, 0); ell(16, -20, 10, 8, COL.ink, 0); ell(26, -40, 7, 6, COL.ink, 0);
+    ln([[-50, -34], [-60, -8 + Math.sin(t * 3) * 6]], 4, COL.ink);
+    const hy = -48 + Math.sin(t * 2) * 2;
+    ell(56, hy, 20, 18, '#fff', 4); ell(66, hy + 10, 14, 10, '#ffb3c6', 3);
+    A.circle(62, hy + 10, 2, COL.ink, 0); A.circle(70, hy + 10, 2, COL.ink, 0);
+    A.circle(52, hy - 4, 3, COL.ink, 0);
+    ell(44, hy - 16, 8, 4, '#fff', 3, -.6); ln([[56, hy - 18], [60, hy - 30]], 4, '#e8d2a8');
+    ctx.restore();
+  }
+  function coureur(){
+    const x = G.x - G.cam, y = GY + 14;
+    const run = G.phase === 'course' || G.phase === 'vanne';
+    const s = run ? Math.sin(G.pas * Math.PI / 2 + (G.x % PX_PAS) / PX_PAS * Math.PI) : 0;
+    const tomb = G.stun > 0 ? Math.min(1, G.stun / TREBUCHE) * .5 : 0;
+    ctx.save(); ctx.translate(x, y); ctx.rotate(tomb);
+    const sw = run ? G.jambe * 16 : 0;
+    // jambes
+    ln([[0, -46], [sw, -2]], 10, COL.ink); ln([[0, -46], [sw, -2]], 6, '#3a4a8a'); ell(sw + 6, -2, 9, 5, COL.red, 2.5);
+    ln([[0, -46], [-sw, -2]], 10, COL.ink); ln([[0, -46], [-sw, -2]], 6, '#2f3a70'); ell(-sw + 6, -2, 9, 5, COL.red, 2.5);
+    // corps et bras
+    A.blob(-14, -94, 28, 52, 10, COL.green, 3);
+    ln([[0, -84], [-sw * .8 + 4, -60]], 8, COL.ink); ln([[0, -84], [-sw * .8 + 4, -60]], 4, COL.green);
+    ln([[0, -84], [sw * .8 + 4, -60]], 8, COL.ink); ln([[0, -84], [sw * .8 + 4, -60]], 4, COL.green);
+    // tête
+    A.circle(4, -110, 17, '#f2c294', 3);
+    ctx.beginPath(); ctx.arc(4, -110, 17, Math.PI * 1.05, Math.PI * 1.95); ctx.fillStyle = '#3a2a20'; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke();
+    A.circle(12, -110, 2.5, COL.ink, 0);
+    if (G.stun > 0) ell(14, -100, 3, 4, '#7a1f3d', 2); else ln([[10, -101], [16, -102]], 2.5, COL.ink);
+    ctx.restore();
+  }
+  function minuteur(){
+    if (G.phase !== 'attente' && G.chrono > .9) return;
+    const tremble = G.phase === 'attente' ? (G.sonne - G.attente < .6 ? Math.sin(G.t * 60) * 3 : 0) : Math.sin(G.t * 80) * 5;
+    ctx.save(); ctx.translate(180 + tremble, 230);
+    A.circle(0, 0, 46, COL.red, 5); A.circle(0, 0, 32, '#fff', 3);
+    A.blob(-10, -58, 20, 14, 4, '#9a8fb0', 3);
+    const a = -Math.PI / 2 + (G.phase === 'attente' ? (1 - G.attente / G.sonne) : 0) * Math.PI * 2;
+    ln([[0, 0], [Math.cos(a) * 24, Math.sin(a) * 24]], 4, COL.ink); A.circle(0, 0, 4, COL.ink, 0);
+    ctx.restore();
+  }
+  function chaussure(cx, cy, d, on){
+    // d = 1 : pied droit (pointe à droite) ; d = -1 : pied gauche (pointe à gauche)
+    const X = v => cx + v * d, y0 = cy + (on ? 4 : 0), Y = v => y0 + v;
+    ctx.beginPath(); ctx.moveTo(X(-34), Y(14)); ctx.lineTo(X(-34), Y(-10)); ctx.quadraticCurveTo(X(-30), Y(-24), X(-14), Y(-22)); ctx.lineTo(X(4), Y(-12)); ctx.quadraticCurveTo(X(34), Y(-8), X(38), Y(8)); ctx.lineTo(X(38), Y(14)); ctx.closePath();
+    ctx.fillStyle = on ? COL.yellow : COL.red; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.lineJoin = 'round'; ctx.stroke();
+    A.blob(cx - 40, Y(12), 80, 10, 5, '#fff', 3.5);
+    [-12, -4, 4].forEach(v => ln([[X(v), Y(-18 + (v + 12) * .3)], [X(v + 6), Y(-12 + (v + 12) * .3)]], 2.5, '#fff'));
+  }
+  function draw(){
+    ctx = A.ctx();
+    decor();
+    coureur();
+    minuteur();
+    // les deux zones de pieds
+    ctx.fillStyle = COL.ink; ctx.fillRect(-200, FY - 6, 760, 300);
+    [['g', 6, -1], ['d', 184, 1]].forEach(([k, x, d]) => {
+      const on = G.pied[k] > .3;
+      A.blob(x, FY + (on ? 4 : 0), 170, 100, 22, on ? '#fff3c4' : '#fff6e0', 4);
+      chaussure(x + 85, FY + 50, d, on);
+    });
+    // HUD : litres perdus
+    const L = G.phase === 'fini' ? G.litres : G.phase === 'attente' ? G.penal * DEBIT : litres();
+    A.bigNum((Math.round(L * 10) / 10).toFixed(1).replace('.', ','), 196, 46, 50, { align: 'right' });
+    A.txt('litres', 206, 58, 22, COL.white, { lw: 6, align: 'left' });
+  }
+  function down(p){
+    if (p.y >= FY - 6){ pied(p.x < 180 ? 'g' : 'd'); return; }
+    const vx = XV + 40 - 70 - G.cam, vy = GY - 76;
+    if (Math.hypot(p.x - vx, p.y - vy) < 80) vanne();
+  }
+  function vignette(c, x, y, w, h, t){
+    ctx = c; const k = h / 230, save = G;
+    G = { t, phase: 'course', attente: 0, sonne: 1, chrono: 0, penal: 0, pas: Math.floor(t * 6), x: 0, jambe: Math.sin(t * 12) > 0 ? 1 : -1, stun: 0, ferme: 0, flaque: .4, cam: 0, pied: { g: 0, d: 0 } };
+    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-150, -230);
+    c.save(); c.translate(150, 130); c.scale(.62, .62); c.translate(-180, -440);
+    G.cam = CAM_MAX; G.x = XV - 110 + Math.sin(t * 2) * 30;
+    decor(); coureur();
+    c.restore();
+    c.restore(); G = save;
+  }
+  Bourdi.ajouter({
+    id: 'vaches', titre: 'Fermer l\'eau des vaches', court: 'L\'eau des vaches',
+    consigne: 'Attends que le minuteur sonne, puis tape gauche, droite, gauche, droite pour courir. Arrivé à la vanne, tape dessus pour fermer l\'eau !',
+    plusPetitGagne: true,
+    seuils: { S: 105, A: 135, B: 165, C: 210, D: 270 },        // décilitres
+    format: n => (Math.max(0, n) / 10).toFixed(1).replace('.', ',') + ' litres',
+    musique: 'jeu', vignette,
+    start(){ ctx = A.ctx(); nouvellePartie(); },
+    update, draw, down, etat: () => G
+  });
+})();
+
+</script>
 <!-- FIN -->
 <script>Bourdi.demarrer();</script>
 
