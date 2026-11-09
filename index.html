@@ -442,7 +442,8 @@ function gaugeV(x, y, h, fill, lit){
   if (fill > 0){ const my = y + h - fh; ctx.beginPath(); ctx.moveTo(x + w + 6, my); ctx.lineTo(x + w + 18, my - 9); ctx.lineTo(x + w + 18, my + 9); ctx.closePath(); ctx.fillStyle = COL.yellow; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke(); }
 }
 function ln2(pts, w, c){ ctx.beginPath(); pts.forEach(([a, b], i) => i ? ctx.lineTo(a, b) : ctx.moveTo(a, b)); ctx.lineWidth = w; ctx.strokeStyle = c; ctx.lineCap = 'round'; ctx.stroke(); }
-const unlocked = i => i === 0 || SAVE.test || (EPREUVES[i - 1] && rankIdx(recOf(EPREUVES[i - 1].id).rank) >= rankIdx(UNLOCK));
+// une épreuve « bientot » (mise en pause) n'est jouable qu'en mode TEST ; ailleurs elle est marquée « À venir »
+const unlocked = i => (EPREUVES[i] && EPREUVES[i].bientot && !SAVE.test) ? false : (i === 0 || SAVE.test || (EPREUVES[i - 1] && rankIdx(recOf(EPREUVES[i - 1].id).rank) >= rankIdx(UNLOCK)));
 
 let cur = null, curIdx = 0, paused = false, runId = 0, RES = null;
 const api = {
@@ -627,7 +628,8 @@ function drawMenu(){
     ctx.save(); rr(ix, iy, iw, ih, 14); ctx.clip(); ep.vignette(ctx, ix, iy, iw, ih, T); ctx.restore();
     rr(ix, iy, iw, ih, 14); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.stroke();
     txt(ep.titre, x + CARD_W / 2, y + 134 + down, 19, COL.red, { max: CARD_W - 16, lw: 5 });
-    if (!rec.tries) txt('Pas encore jouée', x + CARD_W / 2, y + 172 + down, 14, COL.violet, { lw: 0, max: CARD_W - 16 });
+    if (ep.bientot) txt('À venir', x + CARD_W / 2, y + 172 + down, 16, COL.orange, { lw: 0, max: CARD_W - 16 });
+    else if (!rec.tries) txt('Pas encore jouée', x + CARD_W / 2, y + 172 + down, 14, COL.violet, { lw: 0, max: CARD_W - 16 });
     else {
       rankBadge(rec.rank, x + 32, y + 178 + down, 40);
       txt('Record : ' + ep.format(rec.best), x + 58, y + 170 + down, 12, COL.ink, { align: 'left', lw: 0, max: CARD_W - 64 });
@@ -4846,6 +4848,7 @@ pseudoShow(scene === 'name');
   Bourdi.ajouter({
     id: 'oeufs', titre: 'Les Œufs des poules', court: 'Les Œufs',
     consigne: 'Penche ton téléphone pour garder le panier bien droit jusqu\'à la maison. Attention aux poules et à Winkle !',
+    bientot: true,                 // en pause (9 nov.) : seulement en mode TEST, « À venir » pour les autres
     plusPetitGagne: false,
     seuils: { S: 12, A: 10, B: 8, C: 6, D: 4 },
     format: n => Math.max(0, Math.round(n)) + ' œufs',
@@ -5026,6 +5029,7 @@ pseudoShow(scene === 'name');
   Bourdi.ajouter({
     id: 'mouches', titre: 'Les Mouches', court: 'Les Mouches',
     consigne: 'Glisse ton doigt sur les mouches pour les attraper, mais pas les punaises ! À la fin, un grand coup vers le bas pour les écraser.',
+    bientot: true,                 // en pause (9 nov.) : seulement en mode TEST, « À venir » pour les autres
     plusPetitGagne: false,
     seuils: { S: 30, A: 24, B: 18, C: 12, D: 6 },
     format: n => Math.max(0, Math.round(n)) + ' mouches',
