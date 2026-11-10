@@ -27,6 +27,21 @@ html,body{height:100%;margin:0;overflow:hidden;background:var(--bg);overscroll-b
 
 <canvas id="c" aria-label="Bourdi'NERF, épreuves d'arcade"></canvas>
 <input id="pseudo" hidden maxlength="12" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="go" aria-label="Ton pseudo">
+<!-- Si le jeu bloque : on affiche l'erreur à l'écran (pour une capture), au lieu d'un écran noir -->
+<script>
+window.bourdiErreur = function(m){
+  try {
+    if (window.__bourdiErr) return; window.__bourdiErr = true;
+    var d = document.createElement('div');
+    d.style.cssText = 'position:fixed;left:10px;right:10px;bottom:30px;z-index:99;background:#fff;color:#1d1530;border:3px solid #ff3b3b;border-radius:12px;padding:10px;font:13px/1.35 system-ui,sans-serif;white-space:pre-wrap;word-break:break-word;user-select:text;-webkit-user-select:text';
+    var nl = String.fromCharCode(10);
+    d.textContent = 'Erreur (fais une capture pour Xray) :' + nl + m + nl + navigator.userAgent;
+    document.body.appendChild(d);
+  } catch (e) {}
+};
+window.addEventListener('error', function(e){ window.bourdiErreur((e.message || 'erreur') + (e.filename ? ' — ' + e.filename.split('/').pop() + ':' + e.lineno : '')); });
+window.addEventListener('unhandledrejection', function(){});
+</script>
 <!-- MOTEUR -->
 <script>
 'use strict';
@@ -883,6 +898,11 @@ function click(id){
 // ---------- Boucle principale ----------
 let last = performance.now();
 function frame(now){
+  // si une image plante, on continue quand même et on montre l'erreur (sinon : écran noir)
+  try { frameIn(now); } catch (e){ try { ctx.restore(); } catch (x) {} if (window.bourdiErreur) window.bourdiErreur(String(e && e.message || e) + ' [' + scene + '] ' + String(e && e.stack || '').split(String.fromCharCode(10)).slice(0, 3).join(' | ')); }
+  requestAnimationFrame(frame);
+}
+function frameIn(now){
   const dt = Math.min(.05, (now - last) / 1000); last = now; T += dt; sceneT += dt;
   if (trans){ trans.t += dt; if (!trans.sw && trans.t >= .2){ trans.sw = true; resBoom = { rank: false, rec: false }; enter(trans.to); } if (trans.t >= .45) trans = null; }
   if (scene === 'play' && !paused && cur && (!trans || trans.sw)) cur.update(dt);
@@ -903,7 +923,6 @@ function frame(now){
   if (trans) drawTrans(trans.t);
   ctx.restore();
   pseudoPlace();
-  requestAnimationFrame(frame);
 }
 // transition : des ronds qui gonflent puis dégonflent
 function drawTrans(t){
