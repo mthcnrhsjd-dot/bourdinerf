@@ -4876,6 +4876,177 @@ pseudoShow(scene === 'name');
 <script>
 'use strict';
 // =====================================================================
+//  ÉPREUVE 21 — LA VAISSELLE   (OFFICIELLE le 10 nov., version simple)
+//  30 secondes. Les assiettes sales arrivent les unes après les autres.
+//  TOURNER le doigt sur l'assiette : les taches partent (1 tour = propre,
+//  elle brille). JETER à droite : elle part sur l'égouttoir, la suivante
+//  arrive. Jetée encore sale : elle revient dans l'évier.
+//  Score = assiettes propres.
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const DUREE = 30;
+  const SX = 180, SY = 470;                    // l'assiette dans l'évier
+  const PX = 310;                              // l'égouttoir
+
+  function ln(pts, w, c){ ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.lineWidth = w; ctx.strokeStyle = c; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke(); }
+  function ell(x, y, rx, ry, fill, lw = 3, rot = 0){ ctx.beginPath(); ctx.ellipse(x, y, Math.max(.5, rx), Math.max(.5, ry), rot, 0, Math.PI * 2); if (fill){ ctx.fillStyle = fill; ctx.fill(); } if (lw){ ctx.lineWidth = lw; ctx.strokeStyle = COL.ink; ctx.stroke(); } }
+
+  const TACHES = ['#b5462a', '#e8a21a', '#6aa83a', '#8a5a2a', '#d84a4a'];
+  const nouvelleAssiette = () => ({ frot: 0, taches: Array.from({ length: 3 + Math.floor(Math.random() * 3) }, () => ({ a: Math.random() * Math.PI * 2, r: Math.random() * .7, s: 7 + Math.random() * 9, c: TACHES[Math.floor(Math.random() * TACHES.length)] })) });
+
+  let G;
+  function nouvellePartie(){
+    G = { t: 0, reste: DUREE, score: 0, end: 0, pl: nouvelleAssiette(), etat: 'arrive', et: 0, ptr: null, lastSwipe: -9,
+      bulles: [], volent: [], posees: [] };
+  }
+
+  const snd = {
+    couic(){ A.tone(0, 1700 + Math.random() * 500, .05, .03, 'triangle', 2300); },
+    propre(){ A.tone(0, 1568, .1, .06, 'triangle'); A.tone(.08, 2093, .18, .06, 'triangle'); },
+    pose(){ A.tone(0, 2300, .09, .07, 'triangle'); A.tone(.03, 3100, .08, .05, 'triangle'); },
+    sale(){ A.sons.erreur(); }
+  };
+
+  function update(dt){
+    G.t += dt; G.et += dt;
+    G.bulles.forEach(b => { b.t += dt; b.y -= dt * 20; }); G.bulles = G.bulles.filter(b => b.t < .9);
+    G.volent.forEach(v => { v.t += dt; }); G.volent = G.volent.filter(v => v.t < .35);
+    if (G.end){ if (G.end > 0 && G.t - G.end > 1.2){ G.end = -1; A.fin({ score: G.score }); } return; }
+    G.reste -= dt;
+    if (G.reste <= 0){ G.reste = 0; G.end = G.t; A.sons.fin(); return; }
+    if (G.etat === 'arrive' && G.et > .22){ G.etat = 'evier'; G.et = 0; }
+    if (G.etat === 'revient' && G.et > .45){ G.etat = 'evier'; G.et = 0; }
+  }
+  function down(p, id){
+    if (G.end || G.ptr) return;
+    G.ptr = { id, x: p.x, y: p.y, hist: [{ x: p.x, y: p.y, t: G.t }], ang: Math.atan2(p.y - SY, p.x - SX) };
+  }
+  function move(p, id){
+    const P = G.ptr; if (!P || P.id !== id || G.end) return;
+    // tourner : on compte les tours autour de l'assiette
+    const ang = Math.atan2(p.y - SY, p.x - SX), dist = Math.hypot(p.x - SX, (p.y - SY) * 1.4);
+    let da = ang - P.ang; while (da > Math.PI) da -= Math.PI * 2; while (da < -Math.PI) da += Math.PI * 2;
+    P.ang = ang;
+    const pl = G.pl;
+    if (G.etat === 'evier' && dist > 10 && dist < 160 && pl.frot < 1){
+      const avant = pl.frot; pl.frot = Math.min(1, pl.frot + Math.abs(da) / (Math.PI * 2));
+      if (Math.floor(avant * 8) !== Math.floor(pl.frot * 8)){ snd.couic(); G.bulles.push({ x: SX + (Math.random() - .5) * 70, y: SY + (Math.random() - .5) * 30, t: 0, r: 4 + Math.random() * 6 }); }
+      if (pl.frot >= 1){ snd.propre(); A.particules(SX, SY, 14, { colors: [COL.white, COL.sky, COL.yellow], speed: 180, shape: 'star', size: 9 }); }
+    }
+    P.x = p.x; P.y = p.y; P.hist.push({ x: p.x, y: p.y, t: G.t });
+    while (P.hist.length > 2 && G.t - P.hist[0].t > .12) P.hist.shift();
+    // jeter à droite : un mouvement rapide vers la droite
+    const h0 = P.hist[0], dx = p.x - h0.x, dy = p.y - h0.y;
+    // (le doigt doit finir à droite de l'assiette, sinon frotter en rond compterait comme jeter)
+    const loin = SX + (pl.frot >= 1 ? 70 : 105);
+    if (dx > 50 && dx > Math.abs(dy) * 1.8 && p.x > loin && G.t - G.lastSwipe > .2 && G.etat === 'evier'){
+      G.lastSwipe = G.t; P.hist = [{ x: p.x, y: p.y, t: G.t }];
+      jette();
+    }
+  }
+  function up(p, id){ if (id === 'all' || (G.ptr && G.ptr.id === id)) G.ptr = null; }
+  function jette(){
+    const pl = G.pl;
+    if (pl.frot < 1){ G.etat = 'revient'; G.et = 0; snd.sale(); A.secousse(4, .15); return; }    // encore sale : elle revient
+    G.score++; snd.pose();
+    G.volent.push({ pl, t: 0 }); G.posees.push(pl);
+    G.pl = nouvelleAssiette(); G.etat = 'arrive'; G.et = 0;
+  }
+
+  // ---------- Dessin ----------
+  function assiette(x, y, s, p, brille){
+    ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+    ell(0, 4, 50, 31, 'rgba(29,21,48,.25)', 0);
+    ell(0, 0, 50, 31, '#ffffff', 3.5); ell(0, 0, 33, 19, '#f1eee8', 2);
+    ctx.beginPath(); ctx.ellipse(0, 0, 44, 26, 0, Math.PI * 1.1, Math.PI * 1.5); ctx.lineWidth = 3; ctx.strokeStyle = '#7ab0ff'; ctx.stroke();
+    const sale = 1 - p.frot;
+    if (sale > 0){ ctx.save(); ctx.globalAlpha = Math.min(1, sale * 1.2); p.taches.forEach(t => ell(Math.cos(t.a) * t.r * 36, Math.sin(t.a) * t.r * 21, t.s, t.s * .6, t.c, 0)); ctx.restore(); }
+    if (brille){ ell(-16, -9, 10, 3.5, '#fff', 0, -.3); A.star(26, -14, 7 + Math.sin(G ? G.t * 8 : 0) * 2, COL.yellow, 2); }
+    ctx.restore();
+  }
+  function decor(){
+    ctx.fillStyle = '#eaf6ff'; ctx.fillRect(-200, -100, 760, 560);
+    ctx.fillStyle = '#d4ebfb'; for (let y = 0; y < 460; y += 30) for (let x = -200; x < 560; x += 30) if (((x + y) / 30) % 2 === 0) ctx.fillRect(x, y, 30, 30);
+    A.blob(232, 170, 104, 110, 8, '#9fdcff', 4); ln([[284, 170], [284, 280]], 4, COL.ink); ln([[232, 225], [336, 225]], 4, COL.ink);
+    ctx.fillStyle = '#5a7fb0'; ctx.fillRect(-200, 500, 760, 400);
+    A.blob(-20, 452, 400, 34, 6, '#e8d2a8', 4);
+    [[16, 530], [130, 530], [244, 530]].forEach(([x, y]) => { A.blob(x, y, 100, 140, 10, '#6d93c6', 3.5); A.circle(x + 50, y + 22, 6, COL.yellow, 2.5); });
+    // évier + mousse
+    ell(SX, 470, 80, 20, '#9aa4b2', 4); ell(SX, 472, 72, 14, '#6e7886', 0);
+    ctx.save(); ctx.globalAlpha = .9; [[-46, 0, 10], [-26, -4, 13], [26, -3, 12], [46, 0, 10]].forEach(([a, b, r]) => A.circle(SX + a, 464 + b, r, '#ffffff', 2)); ctx.restore();
+    // robinet
+    ln([[SX - 70, 446], [SX - 70, 396], [SX - 54, 380], [SX - 32, 380], [SX - 32, 400]], 12, COL.ink); ln([[SX - 70, 446], [SX - 70, 396], [SX - 54, 380], [SX - 32, 380], [SX - 32, 400]], 7, '#c8d0dc');
+    // égouttoir
+    A.blob(PX - 46, 440, 92, 16, 6, '#c8d0dc', 3);
+    for (let i = 0; i < 7; i++) ln([[PX - 38 + i * 12.5, 440], [PX - 38 + i * 12.5, 418]], 3, '#8a94a4');
+    // pile d'assiettes sales (à gauche, elle ne finit jamais)
+    ctx.save(); ctx.translate(48, 452); ctx.rotate(Math.sin(G.t * 2) * .02);
+    for (let j = 0; j < 12; j++){ ctx.save(); ctx.translate(Math.sin(j * 7.3) * 4, -j * 10); ctx.scale(.6, .4); ell(0, 0, 50, 31, '#ffffff', 4); ell(Math.sin(j * 3) * 14, 0, 9, 6, TACHES[j % TACHES.length], 0); ctx.restore(); }
+    ctx.restore();
+  }
+  function draw(){
+    ctx = A.ctx(); decor();
+    // assiettes posées sur l'égouttoir (les 7 dernières)
+    G.posees.slice(-7).forEach((p, j) => { ctx.save(); ctx.translate(PX - 36 + j * 12, 430); ctx.rotate(-.12); ell(0, -10, 6, 24, '#ffffff', 3); ctx.restore(); });
+    // assiettes qui volent vers l'égouttoir
+    G.volent.forEach(v => { const a = v.t / .35; assiette(SX + (PX - SX) * a, SY - Math.sin(a * Math.PI) * 70, 1 - a * .4, v.pl, false); });
+    // l'assiette en cours
+    let x = SX, y = SY, s = 1;
+    if (G.etat === 'arrive'){ const a = Math.min(1, G.et / .22); x = 48 + (SX - 48) * a; y = 360 + (SY - 360) * a - Math.sin(a * Math.PI) * 40; s = .6 + a * .4; }
+    if (G.etat === 'revient'){ const a = G.et / .45; x = SX + Math.sin(a * Math.PI) * 70; }
+    assiette(x, y, s, G.pl, G.pl.frot >= 1);
+    // aide : un rond qui tourne tant qu'elle est sale, une flèche vers la droite quand elle est propre
+    if (G.etat === 'evier' && !G.end){
+      if (G.pl.frot < 1){
+        const k = G.pl.frot; ctx.save(); ctx.translate(SX, SY);
+        ctx.beginPath(); ctx.ellipse(0, 0, 66, 42, 0, 0, Math.PI * 2); ctx.lineWidth = 9; ctx.strokeStyle = 'rgba(29,21,48,.2)'; ctx.stroke();
+        ctx.beginPath(); ctx.ellipse(0, 0, 66, 42, 0, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2); ctx.lineWidth = 7; ctx.strokeStyle = COL.yellow; ctx.lineCap = 'round'; ctx.stroke();
+        if (G.score === 0 && k < .05){ const a = G.t * 3; ctx.save(); ctx.rotate(0); const fx = Math.cos(a) * 66, fy = Math.sin(a) * 42; A.circle(fx, fy, 10, COL.yellow, 3); ctx.restore(); }
+        ctx.restore();
+      } else {
+        const d = (G.t * 2) % 1;
+        ctx.save(); ctx.translate(SX + 70 + d * 20, SY - 60); ctx.globalAlpha = 1 - d * .5;
+        A.blob(-22, -9, 30, 18, 6, COL.green, 3); ctx.beginPath(); ctx.moveTo(6, -20); ctx.lineTo(26, 0); ctx.lineTo(6, 20); ctx.closePath(); ctx.fillStyle = COL.green; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke();
+        ctx.restore();
+      }
+    }
+    G.bulles.forEach(b => { ctx.save(); ctx.globalAlpha = 1 - b.t / .9; A.circle(b.x, b.y, b.r, 'rgba(255,255,255,.8)', 2, '#7ab0ff'); ctx.restore(); });
+    // éponge sous le doigt
+    if (G.ptr){ ctx.save(); ctx.translate(G.ptr.x, G.ptr.y); ctx.rotate(-.2); A.blob(-20, -13, 40, 26, 6, '#ffd21f', 3); A.rr(-20, -13, 40, 9, 4); ctx.fillStyle = '#4caf50'; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke(); ctx.restore(); }
+    // HUD : assiettes + temps
+    A.bigNum(String(G.score), 180, 50, 56);
+    const w = 260, k = G.reste / DUREE;
+    A.blob(50, 92, w, 20, 10, 'rgba(29,21,48,.5)', 3);
+    if (k > 0) A.blob(50, 92, Math.max(20, w * k), 20, 10, k < .2 ? COL.red : COL.green, 3);
+  }
+
+  function vignette(c, x, y, w, h, t){
+    ctx = c; const k = h / 230;
+    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-150, -230);
+    c.fillStyle = '#eaf6ff'; c.fillRect(-200, -50, 700, 400); c.fillStyle = '#5a7fb0'; c.fillRect(-200, 200, 700, 100);
+    const fake = { frot: (t * .5) % 1, taches: [{ a: 1, r: .5, s: 10, c: '#b5462a' }, { a: 3, r: .4, s: 8, c: '#e8a21a' }, { a: 5, r: .6, s: 7, c: '#6aa83a' }] };
+    assiette(150, 170, 1.2, fake, false);
+    c.save(); c.translate(150 + Math.cos(t * 6) * 26, 168 + Math.sin(t * 6) * 14); A.blob(-18, -12, 36, 24, 6, '#ffd21f', 3); c.restore();
+    c.restore();
+  }
+  Bourdi.ajouter({
+    id: 'vaisselle', titre: 'La Vaisselle', court: 'La Vaisselle',
+    consigne: 'Tourne le doigt sur l’assiette pour la laver, puis jette-la à droite. Le plus possible en 30 secondes !',
+    plusPetitGagne: false,
+    seuils: { S: 24, A: 19, B: 15, C: 11, D: 7 },
+    format: n => Math.round(n) + (Math.round(n) > 1 ? ' assiettes' : ' assiette'),
+    musique: 'jeu', vignette,
+    start(){ ctx = A.ctx(); nouvellePartie(); },
+    update, draw, down, move, up, etat: () => G
+  });
+})();
+
+</script>
+<script>
+'use strict';
+// =====================================================================
 //  ÉPREUVE 21 — LE CONCERT DU PATOU   (en TEST depuis le 10 nov.)
 //  Un « Simon » en musique. Pour chaque phrase :
 //    « Écoute ! »  les animaux chantent une petite phrase en rythme
@@ -5288,178 +5459,6 @@ pseudoShow(scene === 'name');
     bientot: true,                 // en TEST (10 nov.) : jouable seulement en mode TEST, « À venir » pour les autres
     start(){ ctx = A.ctx(); nouvellePartie(); },
     update, draw, down, etat: () => G
-  });
-})();
-
-</script>
-<script>
-'use strict';
-// =====================================================================
-//  ÉPREUVE 22 — LA VAISSELLE   (en TEST ; refaite en simple le 10 nov.)
-//  30 secondes. Les assiettes sales arrivent les unes après les autres.
-//  TOURNER le doigt sur l'assiette : les taches partent (1 tour = propre,
-//  elle brille). JETER à droite : elle part sur l'égouttoir, la suivante
-//  arrive. Jetée encore sale : elle revient dans l'évier.
-//  Score = assiettes propres.
-// =====================================================================
-(() => {
-  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
-  const A = Bourdi.api; let ctx = A.ctx();
-  const DUREE = 30;
-  const SX = 180, SY = 470;                    // l'assiette dans l'évier
-  const PX = 310;                              // l'égouttoir
-
-  function ln(pts, w, c){ ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.lineWidth = w; ctx.strokeStyle = c; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke(); }
-  function ell(x, y, rx, ry, fill, lw = 3, rot = 0){ ctx.beginPath(); ctx.ellipse(x, y, Math.max(.5, rx), Math.max(.5, ry), rot, 0, Math.PI * 2); if (fill){ ctx.fillStyle = fill; ctx.fill(); } if (lw){ ctx.lineWidth = lw; ctx.strokeStyle = COL.ink; ctx.stroke(); } }
-
-  const TACHES = ['#b5462a', '#e8a21a', '#6aa83a', '#8a5a2a', '#d84a4a'];
-  const nouvelleAssiette = () => ({ frot: 0, taches: Array.from({ length: 3 + Math.floor(Math.random() * 3) }, () => ({ a: Math.random() * Math.PI * 2, r: Math.random() * .7, s: 7 + Math.random() * 9, c: TACHES[Math.floor(Math.random() * TACHES.length)] })) });
-
-  let G;
-  function nouvellePartie(){
-    G = { t: 0, reste: DUREE, score: 0, end: 0, pl: nouvelleAssiette(), etat: 'arrive', et: 0, ptr: null, lastSwipe: -9,
-      bulles: [], volent: [], posees: [] };
-  }
-
-  const snd = {
-    couic(){ A.tone(0, 1700 + Math.random() * 500, .05, .03, 'triangle', 2300); },
-    propre(){ A.tone(0, 1568, .1, .06, 'triangle'); A.tone(.08, 2093, .18, .06, 'triangle'); },
-    pose(){ A.tone(0, 2300, .09, .07, 'triangle'); A.tone(.03, 3100, .08, .05, 'triangle'); },
-    sale(){ A.sons.erreur(); }
-  };
-
-  function update(dt){
-    G.t += dt; G.et += dt;
-    G.bulles.forEach(b => { b.t += dt; b.y -= dt * 20; }); G.bulles = G.bulles.filter(b => b.t < .9);
-    G.volent.forEach(v => { v.t += dt; }); G.volent = G.volent.filter(v => v.t < .35);
-    if (G.end){ if (G.end > 0 && G.t - G.end > 1.2){ G.end = -1; A.fin({ score: G.score }); } return; }
-    G.reste -= dt;
-    if (G.reste <= 0){ G.reste = 0; G.end = G.t; A.sons.fin(); return; }
-    if (G.etat === 'arrive' && G.et > .22){ G.etat = 'evier'; G.et = 0; }
-    if (G.etat === 'revient' && G.et > .45){ G.etat = 'evier'; G.et = 0; }
-  }
-  function down(p, id){
-    if (G.end || G.ptr) return;
-    G.ptr = { id, x: p.x, y: p.y, hist: [{ x: p.x, y: p.y, t: G.t }], ang: Math.atan2(p.y - SY, p.x - SX) };
-  }
-  function move(p, id){
-    const P = G.ptr; if (!P || P.id !== id || G.end) return;
-    // tourner : on compte les tours autour de l'assiette
-    const ang = Math.atan2(p.y - SY, p.x - SX), dist = Math.hypot(p.x - SX, (p.y - SY) * 1.4);
-    let da = ang - P.ang; while (da > Math.PI) da -= Math.PI * 2; while (da < -Math.PI) da += Math.PI * 2;
-    P.ang = ang;
-    const pl = G.pl;
-    if (G.etat === 'evier' && dist > 10 && dist < 160 && pl.frot < 1){
-      const avant = pl.frot; pl.frot = Math.min(1, pl.frot + Math.abs(da) / (Math.PI * 2));
-      if (Math.floor(avant * 8) !== Math.floor(pl.frot * 8)){ snd.couic(); G.bulles.push({ x: SX + (Math.random() - .5) * 70, y: SY + (Math.random() - .5) * 30, t: 0, r: 4 + Math.random() * 6 }); }
-      if (pl.frot >= 1){ snd.propre(); A.particules(SX, SY, 14, { colors: [COL.white, COL.sky, COL.yellow], speed: 180, shape: 'star', size: 9 }); }
-    }
-    P.x = p.x; P.y = p.y; P.hist.push({ x: p.x, y: p.y, t: G.t });
-    while (P.hist.length > 2 && G.t - P.hist[0].t > .12) P.hist.shift();
-    // jeter à droite : un mouvement rapide vers la droite
-    const h0 = P.hist[0], dx = p.x - h0.x, dy = p.y - h0.y;
-    // (le doigt doit finir à droite de l'assiette, sinon frotter en rond compterait comme jeter)
-    const loin = SX + (pl.frot >= 1 ? 70 : 105);
-    if (dx > 50 && dx > Math.abs(dy) * 1.8 && p.x > loin && G.t - G.lastSwipe > .2 && G.etat === 'evier'){
-      G.lastSwipe = G.t; P.hist = [{ x: p.x, y: p.y, t: G.t }];
-      jette();
-    }
-  }
-  function up(p, id){ if (id === 'all' || (G.ptr && G.ptr.id === id)) G.ptr = null; }
-  function jette(){
-    const pl = G.pl;
-    if (pl.frot < 1){ G.etat = 'revient'; G.et = 0; snd.sale(); A.secousse(4, .15); return; }    // encore sale : elle revient
-    G.score++; snd.pose();
-    G.volent.push({ pl, t: 0 }); G.posees.push(pl);
-    G.pl = nouvelleAssiette(); G.etat = 'arrive'; G.et = 0;
-  }
-
-  // ---------- Dessin ----------
-  function assiette(x, y, s, p, brille){
-    ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
-    ell(0, 4, 50, 31, 'rgba(29,21,48,.25)', 0);
-    ell(0, 0, 50, 31, '#ffffff', 3.5); ell(0, 0, 33, 19, '#f1eee8', 2);
-    ctx.beginPath(); ctx.ellipse(0, 0, 44, 26, 0, Math.PI * 1.1, Math.PI * 1.5); ctx.lineWidth = 3; ctx.strokeStyle = '#7ab0ff'; ctx.stroke();
-    const sale = 1 - p.frot;
-    if (sale > 0){ ctx.save(); ctx.globalAlpha = Math.min(1, sale * 1.2); p.taches.forEach(t => ell(Math.cos(t.a) * t.r * 36, Math.sin(t.a) * t.r * 21, t.s, t.s * .6, t.c, 0)); ctx.restore(); }
-    if (brille){ ell(-16, -9, 10, 3.5, '#fff', 0, -.3); A.star(26, -14, 7 + Math.sin(G ? G.t * 8 : 0) * 2, COL.yellow, 2); }
-    ctx.restore();
-  }
-  function decor(){
-    ctx.fillStyle = '#eaf6ff'; ctx.fillRect(-200, -100, 760, 560);
-    ctx.fillStyle = '#d4ebfb'; for (let y = 0; y < 460; y += 30) for (let x = -200; x < 560; x += 30) if (((x + y) / 30) % 2 === 0) ctx.fillRect(x, y, 30, 30);
-    A.blob(232, 170, 104, 110, 8, '#9fdcff', 4); ln([[284, 170], [284, 280]], 4, COL.ink); ln([[232, 225], [336, 225]], 4, COL.ink);
-    ctx.fillStyle = '#5a7fb0'; ctx.fillRect(-200, 500, 760, 400);
-    A.blob(-20, 452, 400, 34, 6, '#e8d2a8', 4);
-    [[16, 530], [130, 530], [244, 530]].forEach(([x, y]) => { A.blob(x, y, 100, 140, 10, '#6d93c6', 3.5); A.circle(x + 50, y + 22, 6, COL.yellow, 2.5); });
-    // évier + mousse
-    ell(SX, 470, 80, 20, '#9aa4b2', 4); ell(SX, 472, 72, 14, '#6e7886', 0);
-    ctx.save(); ctx.globalAlpha = .9; [[-46, 0, 10], [-26, -4, 13], [26, -3, 12], [46, 0, 10]].forEach(([a, b, r]) => A.circle(SX + a, 464 + b, r, '#ffffff', 2)); ctx.restore();
-    // robinet
-    ln([[SX - 70, 446], [SX - 70, 396], [SX - 54, 380], [SX - 32, 380], [SX - 32, 400]], 12, COL.ink); ln([[SX - 70, 446], [SX - 70, 396], [SX - 54, 380], [SX - 32, 380], [SX - 32, 400]], 7, '#c8d0dc');
-    // égouttoir
-    A.blob(PX - 46, 440, 92, 16, 6, '#c8d0dc', 3);
-    for (let i = 0; i < 7; i++) ln([[PX - 38 + i * 12.5, 440], [PX - 38 + i * 12.5, 418]], 3, '#8a94a4');
-    // pile d'assiettes sales (à gauche, elle ne finit jamais)
-    ctx.save(); ctx.translate(48, 452); ctx.rotate(Math.sin(G.t * 2) * .02);
-    for (let j = 0; j < 12; j++){ ctx.save(); ctx.translate(Math.sin(j * 7.3) * 4, -j * 10); ctx.scale(.6, .4); ell(0, 0, 50, 31, '#ffffff', 4); ell(Math.sin(j * 3) * 14, 0, 9, 6, TACHES[j % TACHES.length], 0); ctx.restore(); }
-    ctx.restore();
-  }
-  function draw(){
-    ctx = A.ctx(); decor();
-    // assiettes posées sur l'égouttoir (les 7 dernières)
-    G.posees.slice(-7).forEach((p, j) => { ctx.save(); ctx.translate(PX - 36 + j * 12, 430); ctx.rotate(-.12); ell(0, -10, 6, 24, '#ffffff', 3); ctx.restore(); });
-    // assiettes qui volent vers l'égouttoir
-    G.volent.forEach(v => { const a = v.t / .35; assiette(SX + (PX - SX) * a, SY - Math.sin(a * Math.PI) * 70, 1 - a * .4, v.pl, false); });
-    // l'assiette en cours
-    let x = SX, y = SY, s = 1;
-    if (G.etat === 'arrive'){ const a = Math.min(1, G.et / .22); x = 48 + (SX - 48) * a; y = 360 + (SY - 360) * a - Math.sin(a * Math.PI) * 40; s = .6 + a * .4; }
-    if (G.etat === 'revient'){ const a = G.et / .45; x = SX + Math.sin(a * Math.PI) * 70; }
-    assiette(x, y, s, G.pl, G.pl.frot >= 1);
-    // aide : un rond qui tourne tant qu'elle est sale, une flèche vers la droite quand elle est propre
-    if (G.etat === 'evier' && !G.end){
-      if (G.pl.frot < 1){
-        const k = G.pl.frot; ctx.save(); ctx.translate(SX, SY);
-        ctx.beginPath(); ctx.ellipse(0, 0, 66, 42, 0, 0, Math.PI * 2); ctx.lineWidth = 9; ctx.strokeStyle = 'rgba(29,21,48,.2)'; ctx.stroke();
-        ctx.beginPath(); ctx.ellipse(0, 0, 66, 42, 0, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2); ctx.lineWidth = 7; ctx.strokeStyle = COL.yellow; ctx.lineCap = 'round'; ctx.stroke();
-        if (G.score === 0 && k < .05){ const a = G.t * 3; ctx.save(); ctx.rotate(0); const fx = Math.cos(a) * 66, fy = Math.sin(a) * 42; A.circle(fx, fy, 10, COL.yellow, 3); ctx.restore(); }
-        ctx.restore();
-      } else {
-        const d = (G.t * 2) % 1;
-        ctx.save(); ctx.translate(SX + 70 + d * 20, SY - 60); ctx.globalAlpha = 1 - d * .5;
-        A.blob(-22, -9, 30, 18, 6, COL.green, 3); ctx.beginPath(); ctx.moveTo(6, -20); ctx.lineTo(26, 0); ctx.lineTo(6, 20); ctx.closePath(); ctx.fillStyle = COL.green; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke();
-        ctx.restore();
-      }
-    }
-    G.bulles.forEach(b => { ctx.save(); ctx.globalAlpha = 1 - b.t / .9; A.circle(b.x, b.y, b.r, 'rgba(255,255,255,.8)', 2, '#7ab0ff'); ctx.restore(); });
-    // éponge sous le doigt
-    if (G.ptr){ ctx.save(); ctx.translate(G.ptr.x, G.ptr.y); ctx.rotate(-.2); A.blob(-20, -13, 40, 26, 6, '#ffd21f', 3); A.rr(-20, -13, 40, 9, 4); ctx.fillStyle = '#4caf50'; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke(); ctx.restore(); }
-    // HUD : assiettes + temps
-    A.bigNum(String(G.score), 180, 50, 56);
-    const w = 260, k = G.reste / DUREE;
-    A.blob(50, 92, w, 20, 10, 'rgba(29,21,48,.5)', 3);
-    if (k > 0) A.blob(50, 92, Math.max(20, w * k), 20, 10, k < .2 ? COL.red : COL.green, 3);
-  }
-
-  function vignette(c, x, y, w, h, t){
-    ctx = c; const k = h / 230;
-    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-150, -230);
-    c.fillStyle = '#eaf6ff'; c.fillRect(-200, -50, 700, 400); c.fillStyle = '#5a7fb0'; c.fillRect(-200, 200, 700, 100);
-    const fake = { frot: (t * .5) % 1, taches: [{ a: 1, r: .5, s: 10, c: '#b5462a' }, { a: 3, r: .4, s: 8, c: '#e8a21a' }, { a: 5, r: .6, s: 7, c: '#6aa83a' }] };
-    assiette(150, 170, 1.2, fake, false);
-    c.save(); c.translate(150 + Math.cos(t * 6) * 26, 168 + Math.sin(t * 6) * 14); A.blob(-18, -12, 36, 24, 6, '#ffd21f', 3); c.restore();
-    c.restore();
-  }
-  Bourdi.ajouter({
-    id: 'vaisselle', titre: 'La Vaisselle', court: 'La Vaisselle',
-    consigne: 'Tourne le doigt sur l’assiette pour la laver, puis jette-la à droite. Le plus possible en 30 secondes !',
-    plusPetitGagne: false,
-    seuils: { S: 24, A: 19, B: 15, C: 11, D: 7 },
-    format: n => Math.round(n) + (Math.round(n) > 1 ? ' assiettes' : ' assiette'),
-    musique: 'jeu', vignette,
-    bientot: true,                 // en TEST (10 nov.) : jouable seulement en mode TEST, « À venir » pour les autres
-    start(){ ctx = A.ctx(); nouvellePartie(); },
-    update, draw, down, move, up, etat: () => G
   });
 })();
 
