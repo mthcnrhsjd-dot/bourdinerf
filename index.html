@@ -4876,6 +4876,669 @@ pseudoShow(scene === 'name');
 <script>
 'use strict';
 // =====================================================================
+//  ÉPREUVE 21 — LE CONCERT DU PATOU   (en TEST depuis le 10 nov.)
+//  Un « Simon » en rythme : les animaux chantent une petite phrase
+//  (1 mesure), puis c'est à toi : tu tapes sur les animaux dans le même
+//  ordre et au même rythme (1 mesure).
+//  5 manches : 1 = les 3 chats, 2 = + le patou, 3 = + les 3 moutons
+//  (qui se tiennent par les épaules), 4 = + la vache, 5 = tout le monde,
+//  phrases de 2 mesures.  Score = précision en %.
+//  Chaque animal est assis sur un coussin de sa couleur (la même couleur
+//  que ses points sur la barre de rythme).
+//  Voix : bruitages fabriqués ici ; si un jour il enregistre ses voix,
+//  les mettre dans voix.js et les brancher dans chante().
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const PARFAIT = .08, BIEN = .15, FENETRE = .24;
+  const now = () => (typeof actx !== 'undefined' && actx) ? actx.currentTime : performance.now() / 1000;
+  const LOOKS = Bourdi.chats.LOOKS;
+
+  function ln(pts, w, c){ ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.lineWidth = w; ctx.strokeStyle = c; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke(); }
+  function ell(x, y, rx, ry, fill, lw = 3, rot = 0){ ctx.beginPath(); ctx.ellipse(x, y, Math.max(.5, rx), Math.max(.5, ry), rot, 0, Math.PI * 2); if (fill){ ctx.fillStyle = fill; ctx.fill(); } if (lw){ ctx.lineWidth = lw; ctx.strokeStyle = COL.ink; ctx.stroke(); } }
+  function tri(pts, fill, lw = 3){ ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); if (lw){ ctx.lineWidth = lw; ctx.strokeStyle = COL.ink; ctx.lineJoin = 'round'; ctx.stroke(); } }
+
+  // ---------- les musiciens ----------
+  // x, y = pieds ; zone = où taper ; c = couleur du coussin ; arrive = d'où il entre (-1 gauche, 1 droite, 0 déjà là)
+  const MUS = {
+    winkle:  { x: 50,  y: 642, s: .95, zone: [12, 500, 76, 168],  c: '#ffb52e', manche: 1, arrive: 0 },
+    brabus:  { x: 130, y: 642, s: 1.08, zone: [90, 490, 80, 178], c: '#a0582c', manche: 1, arrive: 0 },
+    prince:  { x: 210, y: 642, s: 1,   zone: [172, 496, 76, 172], c: '#5ec8ff', manche: 1, arrive: 0 },
+    patou:   { x: 300, y: 642, s: 1,   zone: [250, 470, 110, 198], c: '#ffffff', manche: 2, arrive: 1 },
+    vache:   { x: 92,  y: 432, s: 1,   zone: [24, 262, 136, 190],  c: '#7ad81e', manche: 4, arrive: -1 },
+    moutons: { x: 252, y: 432, s: 1,   zone: [176, 300, 176, 152], c: '#ff4fa3', manche: 3, arrive: 1 }
+  };
+  const ORDRE = ['winkle', 'brabus', 'prince', 'patou', 'moutons', 'vache'];
+  //            bpm, phrases, mesures par phrase, notes par phrase
+  const MANCHES = [
+    { bpm: 92,  n: 2, bars: 1, notes: [3, 4] },
+    { bpm: 98,  n: 2, bars: 1, notes: [4, 5] },
+    { bpm: 104, n: 2, bars: 1, notes: [5, 5] },
+    { bpm: 108, n: 2, bars: 1, notes: [5, 6] },
+    { bpm: 112, n: 2, bars: 2, notes: [7, 9] }
+  ];
+  const ARRIVEE = 2.4;                      // durée de l'entrée d'un nouveau (et du titre « Manche N »)
+
+  const presents = m => ORDRE.filter(k => MUS[k].manche <= m);
+
+  // ---------- la partition de toute la partie ----------
+  function phrase(m, nb, nouveau, slots, offbeat){
+    // choisit nb positions sur la grille des croches (début toujours sur le 1er temps)
+    const pos = [0], libres = [];
+    for (let i = 1; i < slots; i++) libres.push(i);
+    while (pos.length < nb){
+      // au début, surtout sur les temps ; plus tard, des contretemps
+      const cand = libres.filter(i => !pos.includes(i) && (offbeat || i % 2 === 0 || Math.random() < .25));
+      const pool = cand.length ? cand : libres.filter(i => !pos.includes(i));
+      pos.push(pool[Math.floor(Math.random() * pool.length)]);
+    }
+    pos.sort((a, b) => a - b);
+    const qui = presents(m); let prev = null;
+    const notes = pos.map(p => { let k; do { k = qui[Math.floor(Math.random() * qui.length)]; } while (qui.length > 2 && k === prev && Math.random() < .5); prev = k; return { p, k }; });
+    // le nouveau venu chante au moins une fois
+    if (nouveau && !notes.some(n => n.k === nouveau)) notes[1 + Math.floor(Math.random() * (notes.length - 1))].k = nouveau;
+    return notes;
+  }
+  function partition(){
+    const segs = [], ev = [], beats = []; let t = 0;
+    MANCHES.forEach((M, mi) => {
+      const m = mi + 1, b = 60 / M.bpm, nouveau = ORDRE.find(k => MUS[k].manche === m && MUS[k].arrive);
+      segs.push({ k: 'arrivee', m, t0: t, t1: t + ARRIVEE, nouveau });
+      t += ARRIVEE;
+      // une mesure pour se caler (4 tops)
+      for (let i = 0; i < 4; i++) beats.push({ t: t + i * b, k: 'decompte', i, b, m });
+      segs.push({ k: 'decompte', m, t0: t, t1: t + 4 * b, b });
+      t += 4 * b;
+      for (let f = 0; f < M.n; f++){
+        const slots = M.bars * 8, nb = M.notes[f], len = M.bars * 4 * b;
+        const notes = phrase(m, nb, f === 0 ? nouveau : null, slots, m >= 3);
+        const call = { k: 'ecoute', m, f, t0: t, t1: t + len, b, bars: M.bars, notes: notes.map(n => ({ k: n.k, t: t + n.p * b / 2, vu: false })) };
+        const rep = { k: 'atoi', m, f, t0: t + len, t1: t + 2 * len, b, bars: M.bars, notes: notes.map(n => ({ k: n.k, t: t + len + n.p * b / 2, note: null })), taps: [] };
+        segs.push(call, rep);
+        for (let i = 0; i < M.bars * 8; i++){ beats.push({ t: t + i * b / 2, k: i % 2 ? 'demi' : 'temps', i, b, m }); beats.push({ t: t + len + i * b / 2, k: i % 2 ? 'demi' : 'temps', i, b, m, atoi: true }); }
+        call.notes.forEach(n => beats.push({ t: n.t, k: 'voix', who: n.k }));
+        rep.notes.forEach(n => ev.push(Object.assign(n, { seg: rep })));
+        t += 2 * len;
+      }
+    });
+    beats.sort((a, c) => a.t - c.t);
+    return { segs, ev, beats, fin: t + .5 };
+  }
+
+  let G;
+  function nouvellePartie(){
+    const P = partition();
+    G = { t: 0, a0: null, start: .6, play: -1, segs: P.segs, ev: P.ev, beats: P.beats, fin: P.fin, bi: 0, extra: 0, end: 0, score: 0,
+      sing: {}, faux: {}, notesVol: [], pts: [] };
+  }
+  const segAt = t => G.segs.find(s => t >= s.t0 && t < s.t1) || null;
+
+  // ---------- les voix (fabriquées ; à l'heure exacte T de l'horloge du son) ----------
+  function osc(T, type, f, d, v, f2, vib, vibF){
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = type; o.frequency.setValueAtTime(f, T); if (f2) o.frequency.exponentialRampToValueAtTime(f2, T + d);
+    if (vib){ const l = actx.createOscillator(), lg = actx.createGain(); l.frequency.value = vibF || 7; lg.gain.value = vib; l.connect(lg).connect(o.frequency); l.start(T); l.stop(T + d + .05); }
+    g.gain.setValueAtTime(.0001, T); g.gain.exponentialRampToValueAtTime(v, T + .02); g.gain.setValueAtTime(v, T + d * .7); g.gain.exponentialRampToValueAtTime(.0001, T + d);
+    o.connect(g).connect(sfxBus); o.start(T); o.stop(T + d + .05);
+    return o;
+  }
+  function souffle(T, d, v, type, f, q){
+    const n = actx.createBufferSource(), fl = actx.createBiquadFilter(), g = actx.createGain();
+    if (!noiseBuf){ noiseBuf = actx.createBuffer(1, actx.sampleRate, actx.sampleRate); const dd = noiseBuf.getChannelData(0); for (let i = 0; i < dd.length; i++) dd[i] = Math.random() * 2 - 1; }
+    n.buffer = noiseBuf; fl.type = type; fl.frequency.value = f; fl.Q.value = q || 1;
+    g.gain.setValueAtTime(v, T); g.gain.exponentialRampToValueAtTime(.0001, T + d); n.connect(fl).connect(g).connect(sfxBus); n.start(T); n.stop(T + d + .02);
+  }
+  const VOIX = {
+    winkle(T){ osc(T, 'triangle', 760, .1, .12, 1150); osc(T + .09, 'triangle', 1150, .2, .12, 720, 25, 9); },                     // petit « miou » doux
+    brabus(T){ osc(T, 'sawtooth', 380, .12, .07, 720); osc(T + .11, 'sawtooth', 720, .3, .07, 330, 30, 6); },                    // gros « MRAOOU » de siamois
+    prince(T){ osc(T, 'square', 1250, .07, .05, 1750); osc(T + .065, 'square', 1750, .1, .05, 1350); },                          // « mi ! » aigu
+    patou(T){ osc(T, 'sine', 210, .2, .32, 85); osc(T, 'square', 150, .13, .07, 80); souffle(T, .12, .25, 'lowpass', 700, 1); },  // « WOUF »
+    moutons(T){ [300, 318, 337].forEach((f, i) => osc(T + i * .012, 'sawtooth', f, .5, .035, f * .92, 22, 11)); },             // « BÊÊÊÊ » à trois, qui chevrote
+    vache(T){ osc(T, 'sawtooth', 150, .75, .07, 105, 4, 5); osc(T, 'triangle', 300, .75, .05, 210); }                             // « MEUUUH »
+  };
+  function chante(k, T){ if (!(SAVE.sound && actx)) return; try { VOIX[k](T); } catch (e) {} }
+
+  // ---------- la musique d'accompagnement ----------
+  const BASSE = [43, 43, 48, 50];
+  function joue(be, T){
+    if (!(SAVE.sound && actx)) return;
+    if (be.k === 'voix'){ chante(be.who, T); return; }
+    if (be.k === 'decompte'){ A.tone(T - actx.currentTime, be.i === 3 ? 1320 : 880, .06, .07, 'square'); return; }
+    const d = T - actx.currentTime;
+    if (be.k === 'temps'){
+      A.tone(d, 120, .12, .22, 'sine', 50);                                                              // grosse caisse
+      const r = BASSE[Math.floor(be.i / 2) % 4] + (be.m >= 5 ? 2 : 0);
+      A.tone(d, 440 * Math.pow(2, (r - 69) / 12), be.b * .45, .1, 'triangle');                          // basse
+      if (be.atoi && be.i % 4 === 2) A.bruit(d, .08, .12, 'bandpass', 1800, 1);                        // claquement de mains quand c'est à toi
+    } else A.bruit(d, .03, .06, 'highpass', 7000, 1);                                                   // charleston
+  }
+
+  // ---------- jeu ----------
+  function update(dt){
+    G.t += dt;
+    if (G.a0 == null){ G.start -= dt; if (G.start <= 0) G.a0 = now() + .1; return; }
+    G.play = now() - G.a0;
+    while (G.bi < G.beats.length && G.beats[G.bi].t < G.play + .15){ const be = G.beats[G.bi++]; if (be.t >= G.play - .05) joue(be, G.a0 + be.t); }
+    // pendant « Écoute », les animaux s'animent au moment où ils chantent
+    G.segs.forEach(s => { if (s.k === 'ecoute' && G.play >= s.t0 - .1 && G.play < s.t1 + .1) s.notes.forEach(n => { if (!n.vu && G.play >= n.t){ n.vu = true; anime(n.k, s); } }); });
+    // notes oubliées
+    G.ev.forEach(e => { if (e.note == null && G.play > e.t + FENETRE){ e.note = 0; } });
+    G.notesVol.forEach(n => { n.t += dt; }); G.notesVol = G.notesVol.filter(n => n.t < 1.2);
+    if (G.end){ if (G.end > 0 && G.t - G.end > 2.2){ G.end = -1; A.fin({ score: G.score }); } return; }
+    if (G.play > G.fin){
+      const tot = G.ev.reduce((s, e) => s + (e.note || 0), 0);
+      G.score = Math.max(0, Math.round((tot - G.extra * .5) / G.ev.length * 100));
+      G.end = G.t; A.sons.bien(); ORDRE.forEach(k => { G.sing[k] = G.t + Math.random() * .3; });
+      A.particules(180, 300, 50, { speed: 380 });
+    }
+  }
+  function anime(k, seg){
+    G.sing[k] = G.t;
+    const M = MUS[k], hy = k === 'moutons' || k === 'vache' ? M.y - 150 : k === 'patou' ? M.y - 170 : M.y - 120;
+    G.notesVol.push({ x: M.x + (Math.random() - .5) * 30, y: hy, t: 0, c: M.c, dx: (Math.random() - .5) * 40 });
+  }
+  function down(p){
+    if (G.end || G.a0 == null) return;
+    const t = now() - G.a0, seg = segAt(t);
+    const k = ORDRE.find(q => { const M = MUS[q], z = M.zone; return M.manche <= curManche() && p.x >= z[0] && p.x <= z[0] + z[2] && p.y >= z[1] && p.y <= z[1] + z[3]; });
+    if (!k) return;
+    // c'est à toi (ou presque) : on cherche la note attendue la plus proche, pour cet animal
+    const rep = G.segs.find(s => s.k === 'atoi' && t >= s.t0 - FENETRE && t <= s.t1 + FENETRE);
+    chante(k, actx ? actx.currentTime : 0); anime(k);
+    if (!rep){ if (seg && seg.k === 'ecoute'){ /* pendant « Écoute », on peut chanter avec eux, ça ne compte pas */ } return; }
+    let best = null, bd = 1e9;
+    rep.notes.forEach(n => { if (n.note == null && n.k === k){ const d = Math.abs(t - n.t); if (d < bd){ bd = d; best = n; } } });
+    const x = 40 + Math.max(0, Math.min(1, (t - rep.t0) / (rep.t1 - rep.t0))) * 280;
+    if (!best || bd > FENETRE){ G.extra++; G.faux[k] = G.t; A.secousse(3, .1); rep.taps.push({ x, c: MUS[k].c, ok: 0 }); return; }
+    best.note = bd <= PARFAIT ? 1 : bd <= BIEN ? .6 : .25;
+    rep.taps.push({ x, c: MUS[k].c, ok: best.note });
+    if (best.note === 1) A.particules(MUS[k].x, MUS[k].y - 60, 8, { colors: [MUS[k].c, COL.yellow, COL.white], speed: 160 });
+  }
+  function curManche(){
+    if (G.a0 == null) return 1;
+    const s = segAt(G.play) || G.segs[G.segs.length - 1];
+    return s.m;
+  }
+
+  // ---------- Dessin des animaux (de face) ----------
+  function coussin(x, y, w, c){ ell(x, y - 4, w, 11, c, 3); ell(x, y - 8, w * .8, 6, 'rgba(255,255,255,.35)', 0); }
+  function chat(L, x, y, s, o, t, faux){
+    ctx.save(); ctx.translate(x, y); ctx.scale(s * (1 + o * .08), s * (1 - o * .06));
+    const pt = L.point, mask = L.mask;
+    ln([[16, -10], [36, -26], [30, -50]], 11, COL.ink); ln([[16, -10], [36, -26], [30, -50]], 6, mask ? pt : L.body);   // queue
+    ell(0, -32, 26, 32, L.body);
+    if (L === LOOKS.winkle){ ell(0, -26, 13, 18, '#a9b2bd', 0); }
+    ell(-11, -4, 9, 6, mask ? pt : L.body, 2.5); ell(11, -4, 9, 6, mask ? pt : L.body, 2.5);       // pattes
+    const hy = -78 - o * 5;
+    [[-1, 1], [1, 1]].forEach(([sx]) => { tri([[sx * 23, hy - 6], [sx * 17, hy - 34], [sx * 3, hy - 20]], pt); tri([[sx * 19, hy - 10], [sx * 16, hy - 27], [sx * 8, hy - 19]], '#ffb3cf', 0); });
+    ell(0, hy, 25, 22, L.body);
+    if (mask){ ctx.save(); ctx.beginPath(); ctx.ellipse(0, hy, 23.5, 20.5, 0, 0, Math.PI * 2); ctx.clip(); ell(0, hy + 8, 15, 13, pt, 0); ctx.restore(); }
+    // yeux : fermés quand il chante (il y met tout son cœur)
+    [-9, 9].forEach(ex => {
+      if (o > .25){ ctx.beginPath(); ctx.arc(ex, hy - 3, 5, Math.PI * 1.1, Math.PI * 1.9); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke(); return; }
+      if (faux){ ln([[ex - 4, hy - 7], [ex + 4, hy + 1]], 3, COL.ink); ln([[ex + 4, hy - 7], [ex - 4, hy + 1]], 3, COL.ink); return; }
+      if ((t % 3.1) < .12){ ln([[ex - 5, hy - 4], [ex + 5, hy - 4]], 3, COL.ink); return; }
+      ell(ex, hy - 4, 5.5, 6.5, L.eye, 2.5); ell(ex, hy - 4, 2, 4.5, COL.ink, 0); ell(ex - 1.5, hy - 7, 1.5, 1.5, '#fff', 0);
+    });
+    tri([[-3.5, hy + 4], [3.5, hy + 4], [0, hy + 8]], '#ff7aa8', 2);
+    if (o > .05) ell(0, hy + 13, 4 + o * 3, 2 + o * 7, '#7a1f3d', 2.5);
+    else { ctx.beginPath(); ctx.arc(-3, hy + 10, 3, 0, Math.PI); ctx.arc(3, hy + 10, 3, 0, Math.PI); ctx.lineWidth = 2.5; ctx.strokeStyle = COL.ink; ctx.stroke(); }
+    [[-1], [1]].forEach(([sx]) => { ln([[sx * 9, hy + 7], [sx * 30, hy + 2]], 2, COL.ink); ln([[sx * 9, hy + 10], [sx * 30, hy + 12]], 2, COL.ink); });
+    ctx.restore();
+  }
+  function patou(x, y, s, o, t, faux){
+    const B = '#fbf8f0', SH = '#e6dfcd', TAN = '#e2c08e';
+    ctx.save(); ctx.translate(x, y); ctx.scale(s * (1 + o * .06), s * (1 - o * .05));
+    // grosse queue en panache
+    ln([[34, -20], [58, -40], [52, -78]], 22, COL.ink); ln([[34, -20], [58, -40], [52, -78]], 16, B);
+    // corps tout poilu
+    ell(0, -58, 50, 60, B, 4);
+    [[-38, -90], [-46, -55], [-40, -20], [38, -90], [46, -55], [40, -20]].forEach(([a, b]) => { ctx.beginPath(); ctx.arc(a, b, 9, 0, Math.PI * 2); ctx.fillStyle = B; ctx.fill(); });
+    ell(0, -48, 30, 36, SH, 0);
+    ctx.beginPath(); for (let i = 0; i < 5; i++){ ctx.moveTo(-18 + i * 9, -70); ctx.quadraticCurveTo(-20 + i * 9, -60, -16 + i * 9, -52); } ctx.lineWidth = 2; ctx.strokeStyle = '#cfc6b0'; ctx.stroke();
+    // pattes avant
+    blob2(-26, -48, 18, 50); blob2(8, -48, 18, 50);
+    ell(-17, -2, 13, 7, B, 3); ell(17, -2, 13, 7, B, 3);
+    // collier rouge
+    A.rr(-26, -104, 52, 10, 5); ctx.fillStyle = COL.red; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke();
+    A.circle(0, -92, 5, COL.yellow, 2.5);
+    // tête
+    const hy = -132 - o * 6;
+    ell(0, hy, 37, 33, B, 4);
+    ell(-36, hy + 6, 13, 24, TAN, 3, .25 + Math.sin(t * 2) * .03); ell(36, hy + 6, 13, 24, TAN, 3, -.25 - Math.sin(t * 2) * .03);
+    ell(0, hy + 16, 20, 15, '#fff', 3);
+    ell(-12, hy - 13, 7, 4, TAN, 0); ell(12, hy - 13, 7, 4, TAN, 0);
+    [-13, 13].forEach(ex => {
+      if (o > .25){ ctx.beginPath(); ctx.arc(ex, hy - 4, 5, Math.PI * 1.1, Math.PI * 1.9); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke(); return; }
+      if (faux){ ln([[ex - 4, hy - 8], [ex + 4, hy]], 3, COL.ink); ln([[ex + 4, hy - 8], [ex - 4, hy]], 3, COL.ink); return; }
+      if ((t % 3.7) < .12){ ln([[ex - 5, hy - 4], [ex + 5, hy - 4]], 3, COL.ink); return; }
+      ell(ex, hy - 4, 4.5, 5.5, '#3a2a1e', 2); ell(ex - 1.3, hy - 6, 1.6, 1.6, '#fff', 0);
+    });
+    ell(0, hy + 9, 8, 6, COL.ink, 0); ell(-2, hy + 7, 2.5, 1.5, '#fff', 0);
+    if (o > .05){ ell(0, hy + 24, 8 + o * 4, 2 + o * 10, '#7a1f3d', 2.5); ell(0, hy + 28 + o * 6, 6, 4 + o * 4, '#ff7aa8', 2); }
+    else ln([[-7, hy + 20], [0, hy + 23], [7, hy + 20]], 2.5, COL.ink);
+    ctx.restore();
+    function blob2(a, b, w, h){ A.rr(a, b, w, h, 9); ctx.fillStyle = B; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke(); }
+  }
+  function mouton(x, y, s, o, t, faux, i){
+    const L = '#f4f1ea', F = '#2b2633';
+    ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+    ln([[-9, -8], [-9, 0]], 7, F); ln([[9, -8], [9, 0]], 7, F);
+    const laine = [[0, -40, 24], [-16, -30, 13], [16, -30, 13], [-16, -52, 13], [16, -52, 13], [0, -18, 13], [0, -62, 12]];
+    laine.forEach(([a, b, r]) => A.circle(a, b, r, L, 3));
+    laine.forEach(([a, b, r]) => A.circle(a, b, r - 1.6, L, 0));
+    const hy = -82 - o * 4 + Math.sin(t * 40) * o * 1.5;
+    ell(-15, hy - 2, 9, 4, F, 2, -.35); ell(15, hy - 2, 9, 4, F, 2, .35);
+    ell(0, hy, 13, 17, F, 3);
+    [[-7, hy - 15, 7], [0, hy - 18, 8], [7, hy - 15, 7]].forEach(([a, b, r]) => A.circle(a, b, r, L, 2.5));
+    [-5, 5].forEach(ex => {
+      if (faux){ ln([[ex - 3, hy - 6], [ex + 3, hy]], 2.5, '#fff'); ln([[ex + 3, hy - 6], [ex - 3, hy]], 2.5, '#fff'); return; }
+      ell(ex, hy - 3, 3.6, 4, '#fff', 0); ell(ex + (i - 1) * .8, hy - 2, 1.6, 2.6, COL.ink, 0);
+    });
+    if (o > .05) ell(0, hy + 9, 3 + o * 2, 1.5 + o * 5, '#ff7aa8', 2);
+    else ln([[-3, hy + 9], [3, hy + 9]], 2, '#8a8296');
+    ctx.restore();
+  }
+  function trio(x, y, o, t, faux){
+    const sw = Math.sin(t * 2.2) * 5, xs = [x - 52, x, x + 52];
+    ctx.save(); ctx.translate(sw * .3, 0);
+    xs.forEach((mx, i) => mouton(mx, y, 1, o, t + i * .3, faux, i));
+    // ils se tiennent par les épaules
+    [[0, 1], [1, 2]].forEach(([a, b]) => {
+      const p = [[xs[a] + 14, y - 50], [(xs[a] + xs[b]) / 2, y - 74], [xs[b] - 6, y - 64]];
+      ln(p, 10, COL.ink); ln(p, 5, '#2b2633'); ell(xs[b] - 6, y - 64, 4, 4, '#2b2633', 2);
+    });
+    ctx.restore();
+  }
+  function vache(x, y, s, o, t, faux){
+    const B = '#ffffff', N = '#2b2633';
+    ctx.save(); ctx.translate(x, y); ctx.scale(s * (1 + o * .05), s * (1 - o * .04));
+    ln([[38, -16], [56, -30], [58, -54]], 6, COL.ink); ell(58, -58, 5, 8, N, 2);                             // queue
+    ell(0, -56, 48, 54, B, 4);
+    ctx.save(); ctx.beginPath(); ctx.ellipse(0, -56, 46, 52, 0, 0, Math.PI * 2); ctx.clip();
+    ell(-26, -76, 20, 16, N, 0, .4); ell(28, -36, 22, 18, N, 0, -.3); ell(-14, -18, 12, 9, N, 0); ctx.restore();
+    ell(-18, -4, 14, 8, N, 3); ell(18, -4, 14, 8, N, 3);                                                     // sabots
+    // cloche
+    ln([[-22, -104], [0, -96], [22, -104]], 5, COL.ink);
+    ctx.beginPath(); ctx.moveTo(-8, -98); ctx.lineTo(8, -98); ctx.lineTo(11, -80); ctx.lineTo(-11, -80); ctx.closePath(); ctx.fillStyle = COL.yellow; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke();
+    const hy = -134 - o * 6;
+    // cornes et oreilles
+    ln([[-22, hy - 22], [-32, hy - 34], [-28, hy - 44]], 9, COL.ink); ln([[-22, hy - 22], [-32, hy - 34], [-28, hy - 44]], 5, '#f0e2c0');
+    ln([[22, hy - 22], [32, hy - 34], [28, hy - 44]], 9, COL.ink); ln([[22, hy - 22], [32, hy - 34], [28, hy - 44]], 5, '#f0e2c0');
+    ell(-42, hy - 8, 15, 7, B, 3, -.3); ell(42, hy - 8, 15, 7, B, 3, .3);
+    ell(0, hy, 32, 32, B, 4);
+    ctx.save(); ctx.beginPath(); ctx.ellipse(0, hy, 30, 30, 0, 0, Math.PI * 2); ctx.clip(); ell(-16, hy - 12, 16, 14, N, 0); ctx.restore();
+    [-12, 12].forEach(ex => {
+      if (o > .25){ ctx.beginPath(); ctx.arc(ex, hy - 6, 5, Math.PI * 1.1, Math.PI * 1.9); ctx.lineWidth = 3; ctx.strokeStyle = ex < 0 ? '#fff' : COL.ink; ctx.stroke(); return; }
+      if (faux){ ln([[ex - 4, hy - 10], [ex + 4, hy - 2]], 3, ex < 0 ? '#fff' : COL.ink); ln([[ex + 4, hy - 10], [ex - 4, hy - 2]], 3, ex < 0 ? '#fff' : COL.ink); return; }
+      ell(ex, hy - 6, 5, 6, '#fff', 2); ell(ex, hy - 5, 2.4, 3.6, COL.ink, 0);
+    });
+    ell(0, hy + 20, 24, 15 + o * 4, '#ffb3c4', 3);
+    ell(-9, hy + 17, 3.5, 2.5, '#7a3f52', 0); ell(9, hy + 17, 3.5, 2.5, '#7a3f52', 0);
+    if (o > .05) ell(0, hy + 30 + o * 3, 9 + o * 3, 2 + o * 6, '#7a1f3d', 2.5);
+    [[-6, hy - 34, 6], [2, hy - 36, 7], [8, hy - 32, 5]].forEach(([a, b, r]) => A.circle(a, b, r, N, 2));
+    ctx.restore();
+  }
+
+  function dessineMusicien(k, x, y, o, t, faux){
+    const M = MUS[k];
+    if (k === 'moutons') return trio(x, y, o, t, faux);
+    if (k === 'vache') return vache(x, y, M.s, o, t, faux);
+    if (k === 'patou') return patou(x, y, M.s, o, t, faux);
+    chat(LOOKS[k], x, y, M.s, o, t, faux);
+  }
+
+  // ---------- Dessin ----------
+  function decor(){
+    // salle de concert : fond violet, rideaux, projecteurs, scène en bois
+    ctx.fillStyle = '#2a1d47'; ctx.fillRect(-200, -100, 760, 1000);
+    ctx.save(); ctx.globalAlpha = .12; ctx.fillStyle = '#fff6c8';
+    [[60, 0], [180, 0], [300, 0]].forEach(([a]) => { ctx.beginPath(); ctx.moveTo(a - 14, -40); ctx.lineTo(a + 14, -40); ctx.lineTo(a + 110, 700); ctx.lineTo(a - 110, 700); ctx.closePath(); ctx.fill(); });
+    ctx.restore();
+    ctx.fillStyle = '#b8323a'; ctx.fillRect(-200, -100, 214, 1000); ctx.fillRect(346, -100, 214, 1000);
+    ln([[4, -100], [4, 720]], 3, '#8f2430'); ln([[356, -100], [356, 720]], 3, '#8f2430');
+    ctx.fillStyle = '#c99556'; ctx.fillRect(-200, 440, 760, 400);
+    ctx.fillStyle = '#b07f45'; for (let i = 0; i < 6; i++) ctx.fillRect(-200, 460 + i * 44, 760, 3);
+    ln([[-200, 440], [560, 440]], 4, COL.ink);
+    // estrade du fond (pour la vache et les moutons)
+    A.blob(10, 420, 340, 26, 8, '#9a6a3a', 3);
+  }
+  function draw(){
+    ctx = A.ctx(); decor();
+    const play = G.a0 == null ? -1 : now() - G.a0, seg = G.a0 == null ? null : segAt(play), m = G.a0 == null ? 1 : (seg || G.segs[G.segs.length - 1]).m;
+    // les musiciens (rang du fond d'abord)
+    ['vache', 'moutons', 'winkle', 'brabus', 'prince', 'patou'].forEach(k => {
+      const M = MUS[k]; if (M.manche > m) return;
+      let x = M.x, y = M.y, o = G.sing[k] != null ? Math.max(0, 1 - (G.t - G.sing[k]) / (k === 'vache' ? .7 : k === 'moutons' ? .5 : .3)) : 0;
+      const faux = G.faux[k] != null && G.t - G.faux[k] < .4;
+      // entrée du nouveau venu : il marche jusqu'à sa place, puis hop, il s'assoit
+      if (seg && seg.k === 'arrivee' && seg.nouveau === k){
+        const a = Math.min(1, (play - seg.t0) / (ARRIVEE * .7));
+        x = M.x + M.arrive * (1 - a) * 260; y = M.y - Math.abs(Math.sin(a * Math.PI * 5)) * 10 * (1 - a);
+      }
+      coussin(M.x, M.y, k === 'moutons' ? 86 : k === 'vache' || k === 'patou' ? 52 : 34, M.c);
+      dessineMusicien(k, x, y, o, G.t + x * .01, faux);
+    });
+    // notes de musique qui s'envolent
+    G.notesVol.forEach(n => { const y = n.y - n.t * 70, x = n.x + n.dx * n.t; ctx.save(); ctx.globalAlpha = Math.min(1, 1.6 - n.t * 1.3); ln([[x + 6, y], [x + 6, y - 22], [x + 14, y - 16]], 3, COL.ink); ell(x, y, 7, 5.5, n.c, 2.5, -.3); ctx.restore(); });
+    // HUD : précision
+    const notes = G.ev.filter(v => v.note != null), tot = notes.reduce((s, v) => s + v.note, 0);
+    const pc = notes.length ? Math.max(0, Math.round((tot - G.extra * .5) / notes.length * 100)) : 100;
+    A.bigNum(String(G.end ? G.score : pc), 196, 46, 50, { align: 'right' });
+    A.txt('%', 206, 58, 22, COL.white, { lw: 6, align: 'left' });
+    if (!seg || G.end) return;
+    // la barre de rythme
+    if (seg.k === 'ecoute' || seg.k === 'atoi' || seg.k === 'decompte'){
+      const atoi = seg.k === 'atoi', x0 = 40, w = 280, y0 = 112, k = Math.max(0, Math.min(1, (play - seg.t0) / (seg.t1 - seg.t0)));
+      A.blob(x0 - 8, y0 - 14, w + 16, 28, 14, atoi ? '#2f7a2a' : '#3b2a66', 4);
+      const nb = seg.k === 'decompte' ? 4 : seg.bars * 4;
+      for (let i = 0; i <= nb; i++) ln([[x0 + i * w / nb, y0 - (i % 4 ? 5 : 9)], [x0 + i * w / nb, y0 + (i % 4 ? 5 : 9)]], 2, 'rgba(255,255,255,.45)');
+      if (seg.k === 'ecoute') seg.notes.forEach(n => { if (n.vu){ const nx = x0 + (n.t - seg.t0) / (seg.t1 - seg.t0) * w; A.circle(nx, y0, 8, MUS[n.k].c, 3); } });
+      if (atoi) seg.taps.forEach(tp => { A.circle(tp.x, y0, 8, tp.c, 3); if (!tp.ok){ ln([[tp.x - 6, y0 - 6], [tp.x + 6, y0 + 6]], 3, COL.red); ln([[tp.x + 6, y0 - 6], [tp.x - 6, y0 + 6]], 3, COL.red); } else if (tp.ok === 1) A.circle(tp.x, y0, 12, null, 3, COL.yellow); });
+      ln([[x0 + k * w, y0 - 16], [x0 + k * w, y0 + 16]], 5, COL.ink); ln([[x0 + k * w, y0 - 16], [x0 + k * w, y0 + 16]], 2.5, COL.yellow);
+      if (seg.k === 'ecoute') A.txt('Écoute !', 180, 168, 34, COL.sky, { lw: 8 });
+      if (atoi){ const pz = 1 + Math.max(0, .2 - (play - seg.t0)) * 2; ctx.save(); ctx.translate(180, 168); ctx.scale(pz, pz); A.txt('À toi !', 0, 0, 38, COL.green, { lw: 8 }); ctx.restore(); }
+      if (seg.k === 'decompte'){ const n = Math.min(4, 1 + Math.floor((play - seg.t0) / seg.b)); A.bigNum(String(n), 180, 190, 60); }
+    }
+    if (seg.k === 'arrivee'){
+      const a = (play - seg.t0) / ARRIVEE, s = a < .15 ? a / .15 : 1;
+      ctx.save(); ctx.translate(180, 200); ctx.scale(s, s); ctx.rotate(Math.sin(G.t * 3) * .04);
+      A.txt('Manche ' + seg.m, 0, 0, 46, COL.yellow, { lw: 10 }); ctx.restore();
+    }
+  }
+
+  function vignette(c, x, y, w, h, t){
+    ctx = c; const k = h / 230;
+    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-150, -230);
+    c.fillStyle = '#2a1d47'; c.fillRect(-200, -50, 700, 400); c.fillStyle = '#c99556'; c.fillRect(-200, 196, 700, 100);
+    const o = Math.max(0, Math.sin(t * 5)), o2 = Math.max(0, Math.sin(t * 5 + 2)), o3 = Math.max(0, Math.sin(t * 5 + 4));
+    coussin(52, 220, 30, '#ffb52e'); chat(LOOKS.winkle, 52, 220, .85, o, t);
+    coussin(122, 220, 30, '#5ec8ff'); chat(LOOKS.prince, 122, 220, .85, o3, t + 1);
+    coussin(222, 220, 48, '#fff'); patou(222, 220, .9, o2, t);
+    c.restore();
+  }
+  Bourdi.ajouter({
+    id: 'concert', titre: 'Le Concert du Patou', court: 'Le Concert',
+    consigne: 'Écoute les animaux chanter, puis refais leur chanson en tapant sur eux, au même rythme !',
+    plusPetitGagne: false,
+    seuils: { S: 92, A: 82, B: 70, C: 55, D: 38 },
+    format: n => Math.max(0, Math.round(n)) + ' %',
+    musique: 'aucune', vignette,
+    bientot: true,                 // en TEST (10 nov.) : jouable seulement en mode TEST, « À venir » pour les autres
+    start(){ ctx = A.ctx(); nouvellePartie(); },
+    update, draw, down, etat: () => G
+  });
+})();
+
+</script>
+<script>
+'use strict';
+// =====================================================================
+//  ÉPREUVE 22 — LA VAISSELLE   (en TEST depuis le 10 nov.)
+//  Rythme : une assiette = 4 temps.
+//    temps 1-2 : FROTTER (tourner le doigt en rond sur l'assiette, 1 tour = propre)
+//    temps 3   : RINCER  (glisser vers la GAUCHE, sous le robinet)
+//    temps 4   : POSER   (glisser vers la DROITE, sur l'égouttoir)
+//  Une bande en haut fait défiler ce qu'il faut faire jusqu'au trait.
+//  6 assiettes tranquilles, puis DING DONG : les invités sont passés,
+//  la pile devient énorme (16 de plus) et la musique s'emballe.
+//  Score = précision en %.
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', sky: '#5ec8ff', blue: '#2f6bff', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const PARFAIT = .08, BIEN = .15, FENETRE = .22;
+  const N1 = 6, N2 = 16, N = N1 + N2;
+  const SX = 190, SY = 478;                    // l'assiette dans l'évier
+  const RX = 72, PX = 306;                     // robinet (gauche) et égouttoir (droite)
+  const HIT = 74, LANE = 140, PXB = 62;        // la bande : trait, hauteur, pixels par temps
+  const now = () => (typeof actx !== 'undefined' && actx) ? actx.currentTime : performance.now() / 1000;
+
+  function ln(pts, w, c){ ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.lineWidth = w; ctx.strokeStyle = c; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke(); }
+  function ell(x, y, rx, ry, fill, lw = 3, rot = 0){ ctx.beginPath(); ctx.ellipse(x, y, Math.max(.5, rx), Math.max(.5, ry), rot, 0, Math.PI * 2); if (fill){ ctx.fillStyle = fill; ctx.fill(); } if (lw){ ctx.lineWidth = lw; ctx.strokeStyle = COL.ink; ctx.stroke(); } }
+
+  // ---------- la partition ----------
+  const TACHES = ['#b5462a', '#e8a21a', '#6aa83a', '#8a5a2a', '#d84a4a'];
+  function partition(){
+    const beats = [], plates = []; let t = 0;
+    const b0 = 60 / 96;
+    for (let i = 0; i < 4; i++) beats.push({ t: t + i * b0, k: 'decompte', i, b: b0 });
+    t += 4 * b0;
+    let pause = null;
+    for (let i = 0; i < N; i++){
+      if (i === N1){
+        // DING DONG : les invités sont passés (2 mesures sans assiette, la musique continue)
+        const b = 60 / 108; pause = { t0: t, t1: t + 8 * b };
+        for (let j = 0; j < 8; j++) beats.push({ t: t + j * b, k: 'temps', j, b, n: i });
+        t += 8 * b;
+      }
+      const bpm = i < N1 ? 96 : 112 + (i - N1) / (N2 - 1) * 34, b = 60 / bpm;
+      const taches = Array.from({ length: 3 + Math.floor(Math.random() * 3) }, () => ({ a: Math.random() * Math.PI * 2, r: Math.random() * .7, s: 6 + Math.random() * 9, c: TACHES[Math.floor(Math.random() * TACHES.length)] }));
+      plates.push({ i, t0: t, b, frotFin: t + 2 * b, rinse: { t: t + 2 * b, note: null, dir: -1 }, pose: { t: t + 3 * b, note: null, dir: 1 }, frot: 0, taches });
+      for (let j = 0; j < 4; j++) beats.push({ t: t + j * b, k: 'temps', j, b, n: i });
+      t += 4 * b;
+    }
+    beats.sort((a, c) => a.t - c.t);
+    return { beats, plates, pause, fin: t + .4 };
+  }
+
+  let G;
+  function nouvellePartie(){
+    const P = partition();
+    G = { t: 0, a0: null, start: .6, beats: P.beats, plates: P.plates, pause: P.pause, fin: P.fin, bi: 0, extra: 0, end: 0, score: 0,
+      ptr: null, lastSwipe: -9, eau: 0, bulles: [], ding: false, frotSon: 0 };
+  }
+  const swipes = () => G.plates.flatMap(p => [p.rinse, p.pose]);
+
+  // ---------- la musique (petit groove de cuisine) ----------
+  const BASSE = [45, 45, 52, 50, 48, 48, 43, 45];
+  function joue(be, d){
+    if (be.k === 'decompte'){ A.tone(d, be.i === 3 ? 1320 : 880, .06, .07, 'square'); return; }
+    const j = be.j % 4;
+    if (j === 0 || j === 2) A.tone(d, 130, .12, .25, 'sine', 50);                                     // grosse caisse
+    if (j === 1 || j === 3) A.bruit(d, .09, .14, 'bandpass', 1900, 1.2);                              // claquement
+    A.bruit(d + be.b / 2, .03, .06, 'highpass', 7000, 1);                                             // charleston
+    const r = BASSE[(be.n * 2 + (j >> 1)) % BASSE.length];
+    A.tone(d, 440 * Math.pow(2, (r - 69) / 12), be.b * .4, .1, 'triangle');                            // basse
+    if (j === 0) A.tone(d, 440 * Math.pow(2, (r + 24 - 69) / 12), .08, .03, 'square');                 // petit « pling »
+  }
+  const snd = {
+    couic(){ A.tone(0, 1700 + Math.random() * 500, .05, .025, 'triangle', 2300); },
+    eau(){ A.bruit(0, .3, .16, 'bandpass', 2600, .8, 1200); },
+    pose(q){ A.tone(0, 2300, .09, .06 * q + .02, 'triangle'); A.tone(.03, 3100, .08, .04 * q + .01, 'triangle'); },
+    rate(){ A.tone(0, 200, .15, .06, 'sawtooth', 140); },
+    ding(){ A.tone(0, 880, .5, .1, 'sine'); A.tone(.45, 698, .7, .1, 'sine'); }
+  };
+
+  // ---------- jeu ----------
+  function plateEnCours(play){ return G.plates.find(p => play < p.pose.t + FENETRE) || null; }
+  function update(dt){
+    G.t += dt; G.eau = Math.max(0, G.eau - dt * 2.5);
+    G.bulles.forEach(b => { b.t += dt; b.y -= dt * 20; }); G.bulles = G.bulles.filter(b => b.t < .9);
+    if (G.a0 == null){ G.start -= dt; if (G.start <= 0) G.a0 = now() + .1; return; }
+    const play = now() - G.a0;
+    while (G.bi < G.beats.length && G.beats[G.bi].t < play + .15){ const be = G.beats[G.bi++]; if (be.t >= play - .05) joue(be, Math.max(0, be.t - play)); }
+    if (!G.ding && G.pause && play >= G.pause.t0){ G.ding = true; snd.ding(); A.secousse(4, .3); }
+    // gestes oubliés : l'assiette avance quand même
+    G.plates.forEach(p => {
+      if (p.rinse.note == null && play > p.rinse.t + FENETRE){ p.rinse.note = 0; }
+      if (p.pose.note == null && play > p.pose.t + FENETRE){ p.pose.note = 0; }
+    });
+    if (G.end){ if (G.end > 0 && G.t - G.end > 2){ G.end = -1; A.fin({ score: G.score }); } return; }
+    if (play > G.fin){
+      const tot = G.plates.reduce((s, p) => s + Math.min(1, p.frot) + p.rinse.note + p.pose.note, 0);
+      G.score = Math.max(0, Math.round((tot - G.extra * .5) / (N * 3) * 100));
+      G.end = G.t; A.sons.bien();
+    }
+  }
+  function down(p, id){
+    if (G.end || G.a0 == null || G.ptr) return;
+    G.ptr = { id, x: p.x, y: p.y, hist: [{ x: p.x, y: p.y, t: G.t }], ang: Math.atan2(p.y - SY, p.x - SX) };
+  }
+  function move(p, id){
+    const P = G.ptr; if (!P || P.id !== id || G.a0 == null || G.end) return;
+    const play = now() - G.a0, pl = plateEnCours(play);
+    // frotter : on compte les tours autour de l'assiette
+    const ang = Math.atan2(p.y - SY, p.x - SX), dist = Math.hypot(p.x - SX, (p.y - SY) * 1.4);
+    let da = ang - P.ang; while (da > Math.PI) da -= Math.PI * 2; while (da < -Math.PI) da += Math.PI * 2;
+    P.ang = ang;
+    if (pl && play >= pl.t0 - .12 && play < pl.frotFin - .1 && dist > 10 && dist < 150){
+      const avant = pl.frot; pl.frot = Math.min(1.25, pl.frot + Math.abs(da) / (Math.PI * 2));
+      if (Math.floor(avant * 8) !== Math.floor(pl.frot * 8)){ snd.couic(); if (pl.frot <= 1) G.bulles.push({ x: SX + (Math.random() - .5) * 70, y: SY - 10 + (Math.random() - .5) * 30, t: 0, r: 4 + Math.random() * 6 }); }
+    }
+    P.x = p.x; P.y = p.y; P.hist.push({ x: p.x, y: p.y, t: G.t });
+    while (P.hist.length > 2 && G.t - P.hist[0].t > .12) P.hist.shift();
+    // glisser : un mouvement rapide vers la gauche ou la droite
+    const h0 = P.hist[0], dx = p.x - h0.x, dy = p.y - h0.y;
+    if (Math.abs(dx) > 38 && Math.abs(dx) > Math.abs(dy) * 1.3 && G.t - G.lastSwipe > .16){
+      G.lastSwipe = G.t; P.hist = [{ x: p.x, y: p.y, t: G.t }];
+      glisse(dx < 0 ? -1 : 1, play, pl);
+    }
+  }
+  function up(p, id){ if (id === 'all' || (G.ptr && G.ptr.id === id)) G.ptr = null; }
+  function glisse(dir, play, pl){
+    let best = null, bd = 1e9;
+    swipes().forEach(e => { if (e.note == null && e.dir === dir){ const d = Math.abs(play - e.t); if (d < bd){ bd = d; best = e; } } });
+    if (!best || bd > FENETRE){
+      // pendant qu'on frotte, un grand geste ne compte pas comme une faute
+      if (pl && play < pl.frotFin - FENETRE) return;
+      G.extra++; snd.rate(); A.secousse(3, .1); return;
+    }
+    best.note = bd <= PARFAIT ? 1 : bd <= BIEN ? .6 : .25;
+    if (dir < 0){ snd.eau(); G.eau = 1; } else snd.pose(best.note);
+    if (best.note === 1) A.particules(dir < 0 ? RX : PX, SY - 20, 8, { colors: dir < 0 ? [COL.sky, COL.white] : [COL.yellow, COL.white], speed: 150 });
+  }
+
+  // ---------- Dessin ----------
+  function assiette(x, y, s, p, sale, k){
+    ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+    ell(0, 4, 46, 28, 'rgba(29,21,48,.25)', 0);
+    ell(0, 0, 46, 28, '#ffffff', 3.5); ell(0, 0, 30, 17, '#f1eee8', 2);
+    ctx.beginPath(); ctx.ellipse(0, 0, 40, 24, 0, Math.PI * 1.1, Math.PI * 1.5); ctx.lineWidth = 3; ctx.strokeStyle = '#7ab0ff'; ctx.stroke();
+    if (sale > 0){ ctx.save(); ctx.globalAlpha = Math.min(1, sale); p.taches.forEach(t => ell(Math.cos(t.a) * t.r * 34, Math.sin(t.a) * t.r * 20, t.s, t.s * .6, t.c, 0)); ctx.restore(); }
+    if (k){ ctx.save(); ctx.globalAlpha = k; ell(-14, -8, 9, 3, '#fff', 0, -.3); ctx.restore(); }
+    ctx.restore();
+  }
+  function decor(play){
+    // carrelage
+    ctx.fillStyle = '#eaf6ff'; ctx.fillRect(-200, -100, 760, 560);
+    ctx.fillStyle = '#d4ebfb'; for (let y = 0; y < 460; y += 30) for (let x = -200; x < 560; x += 30) if (((x + y) / 30) % 2 === 0) ctx.fillRect(x, y, 30, 30);
+    // fenêtre
+    A.blob(232, 196, 104, 110, 8, '#9fdcff', 4); ln([[284, 196], [284, 306]], 4, COL.ink); ln([[232, 251], [336, 251]], 4, COL.ink);
+    // plan de travail et placard
+    ctx.fillStyle = '#5a7fb0'; ctx.fillRect(-200, 500, 760, 400);
+    A.blob(-20, 452, 400, 34, 6, '#e8d2a8', 4);
+    [[16, 530], [130, 530], [244, 530]].forEach(([x, y]) => { A.blob(x, y, 100, 140, 10, '#6d93c6', 3.5); A.circle(x + 50, y + 22, 6, COL.yellow, 2.5); });
+    // évier (bac à laver au milieu, bac à rincer à gauche)
+    ell(SX, 470, 74, 18, '#9aa4b2', 4); ell(SX, 472, 66, 13, '#6e7886', 0);
+    ell(RX, 470, 46, 14, '#9aa4b2', 4); ell(RX, 472, 39, 10, '#6e7886', 0);
+    // mousse dans le bac
+    ctx.save(); ctx.globalAlpha = .9; [[-40, 0, 10], [-20, -4, 13], [8, -3, 12], [32, 0, 10], [50, 2, 7]].forEach(([a, b, r]) => A.circle(SX + a, 466 + b, r, '#ffffff', 2)); ctx.restore();
+    // robinet
+    ln([[RX - 30, 446], [RX - 30, 396], [RX - 14, 380], [RX + 8, 380], [RX + 8, 400]], 12, COL.ink); ln([[RX - 30, 446], [RX - 30, 396], [RX - 14, 380], [RX + 8, 380], [RX + 8, 400]], 7, '#c8d0dc');
+    if (G.eau > 0){ ctx.save(); ctx.globalAlpha = G.eau; A.rr(RX + 2, 400, 12, 60, 6); ctx.fillStyle = 'rgba(94,200,255,.8)'; ctx.fill(); ctx.restore(); }
+    // égouttoir
+    A.blob(PX - 46, 440, 92, 16, 6, '#c8d0dc', 3);
+    for (let i = 0; i < 7; i++) ln([[PX - 38 + i * 12.5, 440], [PX - 38 + i * 12.5, 418]], 3, '#8a94a4');
+  }
+  function draw(){
+    ctx = A.ctx();
+    const play = G.a0 == null ? -2 : now() - G.a0;
+    decor(play);
+    // assiettes déjà posées sur l'égouttoir (debout)
+    const posees = G.plates.filter(p => play > p.pose.t + .15);
+    posees.slice(-7).forEach((p, j) => { ctx.save(); ctx.translate(PX - 36 + j * 12, 430); ctx.rotate(-.12); ell(0, -10, 6, 24, '#ffffff', 3); if (p.frot < .99){ ctx.globalAlpha = .8 * (1 - Math.min(1, p.frot)); ell(0, -14, 3, 5, p.taches[0].c, 0); } ctx.restore(); });
+    // la pile d'assiettes sales (derrière l'évier)
+    const pile = G.plates.filter(p => play < p.t0 - .4 && (p.i < N1 || play >= G.pause.t0 + (p.i - N1) * .22));
+    const hpile = pile.length, pench = hpile > 10 ? Math.sin(G.t * 2.4) * .004 * hpile : 0;
+    ctx.save(); ctx.translate(SX, 446); ctx.rotate(pench);
+    pile.slice().reverse().forEach((p, j) => {
+      const tombe = p.i >= N1 ? Math.max(0, 1 - (play - G.pause.t0 - (p.i - N1) * .22) / .25) : 0;
+      ctx.save(); ctx.translate(Math.sin(p.i * 7.3) * 5, -j * 11 - tombe * 300); ctx.scale(.85, .45); assiette(0, 0, 1, p, 1, 0); ctx.restore();
+    });
+    ctx.restore();
+    // l'assiette en cours : arrive dans l'évier, va au robinet, puis à l'égouttoir
+    const pl = G.a0 == null ? null : G.plates.find(p => play >= p.t0 - .4 && play < p.pose.t + .15);
+    if (pl){
+      let x = SX, y = SY - 14, s = 1;
+      if (play < pl.t0) { const a = (play - (pl.t0 - .4)) / .4; y = SY - 14 - (1 - a) * 40; s = .85 + a * .15; }
+      const tR = pl.rinse.t, tP = pl.pose.t;
+      if (play >= tR - .02){ const a = Math.min(1, (play - tR + .02) / .12); x = SX + (RX - SX) * a; }
+      if (play >= tP - .02){ const a = Math.min(1, (play - tP + .02) / .14); x = RX + (PX - RX) * a; y = SY - 14 - Math.sin(a * Math.PI) * 50; }
+      assiette(x, y, s, pl, 1 - Math.min(1, pl.frot), play >= tR ? 1 : 0);
+      // anneau qui montre le frottage
+      if (play >= pl.t0 - .12 && play < pl.frotFin){
+        const k = Math.min(1, pl.frot); ctx.save(); ctx.translate(SX, SY - 14);
+        ctx.beginPath(); ctx.ellipse(0, 0, 58, 38, 0, 0, Math.PI * 2); ctx.lineWidth = 9; ctx.strokeStyle = 'rgba(29,21,48,.25)'; ctx.stroke();
+        ctx.beginPath(); ctx.ellipse(0, 0, 58, 38, 0, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2); ctx.lineWidth = 7; ctx.strokeStyle = k >= 1 ? COL.green : COL.yellow; ctx.lineCap = 'round'; ctx.stroke();
+        ctx.restore();
+      }
+    }
+    G.bulles.forEach(b => { ctx.save(); ctx.globalAlpha = 1 - b.t / .9; A.circle(b.x, b.y, b.r, 'rgba(255,255,255,.8)', 2, '#7ab0ff'); ctx.restore(); });
+    // éponge sous le doigt
+    if (G.ptr){ ctx.save(); ctx.translate(G.ptr.x, G.ptr.y); ctx.rotate(-.2); A.blob(-20, -13, 40, 26, 6, '#ffd21f', 3); A.rr(-20, -13, 40, 9, 4); ctx.fillStyle = '#4caf50'; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke(); ctx.restore(); }
+    // ---------- la bande en haut ----------
+    const bc = (pl || G.plates[0]).b;
+    A.blob(14, LANE - 30, 332, 60, 18, 'rgba(29,21,48,.82)', 4);
+    ctx.save(); ctx.beginPath(); ctx.rect(16, LANE - 30, 328, 60); ctx.clip();
+    for (const p of G.plates){
+      const xf = HIT + (p.t0 - play) / p.b * PXB;
+      if (xf > 380) break;
+      if (HIT + (p.pose.t - play) / p.b * PXB < -30) continue;
+      // frotter : une barre jaune sur 2 temps
+      const w = 2 * PXB - 10;
+      A.blob(xf - 6, LANE - 14, w, 28, 14, p.frot >= 1 ? COL.green : COL.yellow, 3);
+      tourne(xf + w / 2 - 6, LANE, G.t * 4);
+      // rincer (gauche, bleu) et poser (droite, vert)
+      [[p.rinse, COL.sky], [p.pose, COL.green]].forEach(([e, c]) => {
+        const ex = HIT + (e.t - play) / p.b * PXB; if (e.note != null && e.note > 0) return;
+        A.circle(ex, LANE, 18, e.note === 0 ? '#9a8fb0' : c, 3); fleche(ex, LANE, e.dir);
+      });
+    }
+    ctx.restore();
+    ln([[HIT, LANE - 32], [HIT, LANE + 32]], 6, COL.ink); ln([[HIT, LANE - 32], [HIT, LANE + 32]], 3, COL.white);
+    // HUD : précision
+    const faits = G.plates.filter(p => p.pose.note != null);
+    const tot = faits.reduce((s, p) => s + Math.min(1, p.frot) + p.rinse.note + p.pose.note, 0);
+    const pc = faits.length ? Math.max(0, Math.round((tot - G.extra * .5) / (faits.length * 3) * 100)) : 100;
+    A.bigNum(String(G.end ? G.score : pc), 196, 46, 50, { align: 'right' });
+    A.txt('%', 206, 58, 22, COL.white, { lw: 6, align: 'left' });
+    // décompte
+    if (G.a0 != null && play < 4 * 60 / 96 && play >= 0){ const n = 1 + Math.floor(play / (60 / 96)); A.bigNum(String(n), 180, 300, 90); }
+    // DING DONG
+    if (G.pause && play >= G.pause.t0 && play < G.pause.t0 + 1.4){ const a = (play - G.pause.t0) / 1.4; ctx.save(); ctx.translate(180, 260); const s = a < .15 ? a / .15 : 1; ctx.scale(s, s); ctx.rotate(Math.sin(G.t * 20) * .05); A.txt('DING DONG !', 0, 0, 44, COL.yellow, { lw: 10 }); ctx.restore(); }
+  }
+  function fleche(x, y, dir){ ctx.save(); ctx.translate(x, y); ctx.scale(-dir, 1); ln([[7, 0], [-7, 0]], 4, COL.ink); ln([[-1, -6], [-7, 0], [-1, 6]], 4, COL.ink); ctx.restore(); }
+  function tourne(x, y, a){ ctx.save(); ctx.translate(x, y); ctx.rotate(a); ctx.beginPath(); ctx.arc(0, 0, 8, .3, Math.PI * 1.7); ctx.lineWidth = 3.5; ctx.strokeStyle = COL.ink; ctx.stroke(); ctx.rotate(Math.PI * 1.7); ln([[8, -5], [8, 0], [3, -1]], 3.5, COL.ink); ctx.restore(); }
+
+  function vignette(c, x, y, w, h, t){
+    ctx = c; const k = h / 230;
+    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-150, -230);
+    c.fillStyle = '#eaf6ff'; c.fillRect(-200, -50, 700, 400); c.fillStyle = '#5a7fb0'; c.fillRect(-200, 200, 700, 100);
+    const fake = { taches: [{ a: 1, r: .5, s: 10, c: '#b5462a' }, { a: 3, r: .4, s: 8, c: '#e8a21a' }, { a: 5, r: .6, s: 7, c: '#6aa83a' }] };
+    for (let i = 0; i < 6; i++){ c.save(); c.translate(80, 180 - i * 9); c.scale(.85, .4); assiette(0, 0, 1, fake, 1, 0); c.restore(); }
+    assiette(200, 170, 1.1, fake, .5 + Math.sin(t * 3) * .5, 0);
+    c.save(); c.translate(200 + Math.cos(t * 6) * 22, 168 + Math.sin(t * 6) * 12); A.blob(-18, -12, 36, 24, 6, '#ffd21f', 3); c.restore();
+    c.restore();
+  }
+  Bourdi.ajouter({
+    id: 'vaisselle', titre: 'La Vaisselle', court: 'La Vaisselle',
+    consigne: 'Tourne le doigt sur l’assiette pour frotter, glisse à gauche pour rincer, à droite pour poser. En rythme !',
+    plusPetitGagne: false,
+    seuils: { S: 92, A: 82, B: 70, C: 55, D: 38 },
+    format: n => Math.max(0, Math.round(n)) + ' %',
+    musique: 'aucune', vignette,
+    bientot: true,                 // en TEST (10 nov.) : jouable seulement en mode TEST, « À venir » pour les autres
+    start(){ ctx = A.ctx(); nouvellePartie(); },
+    update, draw, down, move, up, etat: () => G
+  });
+})();
+
+</script>
+<script>
+'use strict';
+// =====================================================================
 //  ÉPREUVE 18 — LES ŒUFS DES POULES   (gyroscope seulement)
 //  On marche tout seul du poulailler à la maison avec un panier de 12 œufs.
 //  Bosses, poules qui traversent et Winkle (croche-patte) font pencher le
