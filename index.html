@@ -805,26 +805,34 @@ function drawResult(){
 }
 
 // --- Classement ---
+// classement général : la somme des points de rang de chaque joueur (épreuves « À venir » non comptées)
+const PTS_RANG = { S: 5, A: 4, B: 3, C: 2, D: 1, E: 0 };
+function classementGeneral(){
+  if (!lbData) return [];
+  const tot = {};
+  EPREUVES.forEach(ep => {
+    if (ep.bientot) return;
+    const best = {};
+    (lbData[ep.id] || []).forEach(r => { if (r.score != null && r.name && (!best[r.name] || better(ep, r.score, best[r.name].score))) best[r.name] = r; });
+    Object.values(best).forEach(r => { tot[r.name] = (tot[r.name] || 0) + PTS_RANG[rankOf(ep, r)]; });
+  });
+  return Object.keys(tot).map(name => ({ name, pts: tot[name] })).sort((a, b) => b.pts - a.pts || a.name.localeCompare(b.name));
+}
 function drawBoard(){
   sunburst(180, -100, COL.blue, '#4a80ff', T * .1, 20);
   txt('Classement', 200, 50, 36, COL.yellow);
   button('boardBack', 14, 24, 56, 50, icoBack, { color: COL.pink });
-  // un onglet par épreuve (2 par ligne)
-  EPREUVES.forEach((ep, i) => button('tab-' + i, 20 + (i % 2) * 164, 96 + Math.floor(i / 2) * 52, 156, 44, ep.court || ep.titre,
-    { color: boardTab === i ? COL.yellow : COL.white, fg: boardTab === i ? COL.white : COL.violet, size: 19 }));
-  const ep = EPREUVES[boardTab]; if (!ep) return;
-  const top = 96 + Math.ceil(EPREUVES.length / 2) * 52 + 14;
+  // classement GÉNÉRAL (14 nov.) : dans chaque épreuve officielle, S = 5 pts, A = 4, B = 3, C = 2, D = 1, E = 0 ; on additionne
+  txt('S = 5 pts, A = 4, B = 3, C = 2, D = 1', 180, 100, 17, COL.white, { lw: 5 });
+  const top = 124;
   blob(16, top, 328, 690 - top, 22, COL.white, 5);
-  // même pseudo = même joueur (Safari et icône de l'écran d'accueil) : on garde son meilleur score
-  const best = {};
-  ((lbData && lbData[ep.id]) || []).forEach(r => { if (r.score != null && (!best[r.name] || better(ep, r.score, best[r.name].score))) best[r.name] = r; });
-  const rows = Object.values(best).sort((a, b) => ep.plusPetitGagne ? a.score - b.score : b.score - a.score);
+  const rows = classementGeneral();
   const cy = top + (690 - top) / 2;
   if (lbState === 'load') txt('Chargement…', 180, cy, 20, COL.violet, { lw: 0 });
   else if (lbState === 'err') { txt('Pas de connexion.', 180, cy - 14, 20, COL.violet, { lw: 0 }); txt('Réessaie plus tard.', 180, cy + 14, 20, COL.violet, { lw: 0 }); }
   else if (!rows.length) txt('Pas encore de score ici !', 180, cy, 20, COL.violet, { lw: 0 });
   else {
-    rows.forEach((r, i) => { r.rank = i + 1; });
+    rows.forEach((r, i) => { r.rank = i && r.pts === rows[i - 1].pts ? rows[i - 1].rank : i + 1; });
     const n = Math.floor((690 - top - 20) / 38), meI = rows.findIndex(r => r.name === SAVE.name);
     const shown = meI >= n ? rows.slice(0, n - 1).concat([rows[meI]]) : rows.slice(0, n);
     shown.forEach((r, i) => {
@@ -834,7 +842,7 @@ function drawBoard(){
       if (medal) circle(46, y, 14, medal, 3);
       txt(String(r.rank), 46, y + 1, 17, medal ? COL.ink : COL.violet, { lw: 0 });
       txt(r.name + (me ? ' (toi)' : ''), 70, y + 1, 18, COL.ink, { align: 'left', lw: 0, max: 160 });
-      txt(ep.format(r.score), 328, y + 1, 18, me ? COL.red : COL.violet, { align: 'right', lw: 0 });
+      txt(r.pts + ' pts', 328, y + 1, 18, me ? COL.red : COL.violet, { align: 'right', lw: 0 });
     });
   }
 }
