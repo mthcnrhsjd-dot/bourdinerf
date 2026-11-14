@@ -415,8 +415,15 @@ document.addEventListener('visibilitychange', () => {
 const EPREUVES = [];
 const Bourdi = window.Bourdi = {
   ajouter(ep){ if (ep.actif === false || EPREUVES.some(e => e.id === ep.id)) return; EPREUVES.push(ep); },
-  demarrer(){ requestAnimationFrame(frame); lbLoad(); }
+  demarrer(){ rattrapeRangs(); requestAnimationFrame(frame); lbLoad(); }
 };
+// si les seuils d'une épreuve ont été baissés, le rang gardé sur le téléphone remonte tout seul (jamais il ne baisse)
+function rattrapeRangs(){
+  let chg = false;
+  EPREUVES.forEach(ep => { if (ep.rangMax) return; const rec = SAVE.rec[ep.id]; if (!rec || rec.best == null) return;
+    const r = rankOf(ep, { score: rec.best }); if (rankIdx(r) > rankIdx(rec.rank)){ rec.rank = r; chg = true; } });
+  if (chg) save();
+}
 function rankOf(ep, res){
   const s = ep.seuils, v = res.score; let r = 'E';
   for (const k of ['S', 'A', 'B', 'C', 'D']) if (ep.plusPetitGagne ? v <= s[k] : v >= s[k]) { r = k; break; }
@@ -5055,6 +5062,381 @@ pseudoShow(scene === 'name');
 <script>
 'use strict';
 // =====================================================================
+//  ÉPREUVE 23 — broke band   (OFFICIELLE le 14 nov. ; mode Enregistrer seulement en mode TEST)
+//  Esprit « groupe de rock » : Brabus, Prince et Winkle sont assis de dos
+//  devant la télé du salon. Sa chanson (voix.js : bb_chanson) passe, et
+//  les notes arrivent sur 3 pistes en perspective qui sortent de la télé :
+//    gauche = Brabus (notes graves), milieu = Prince, droite = Winkle (aiguës).
+//  Tape quand la note touche la ligne. Note tenue (longue traîne) : garde
+//  le doigt appuyé jusqu'au bout.
+//  Note ratée (ou tape sur une piste vide) = sa fausse note (bb_rate1/2/3,
+//  une par piste) et on perd des points. Pas de vies : la chanson va au bout.
+//  La télé montre seulement des traits de hauteur (pas de paroles).
+//  Partition repérée dans sa voix : outils/broke_band_notes.json
+//  Score = précision en %.
+//  Textes validés le 14 nov. : titre « broke band », consigne, « % », « À toi ! ».
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const LOOKS = Bourdi.chats.LOOKS;
+
+  // SES notes, tapées par lui (mode Enregistrer, 14 nov.)
+  // [temps (s depuis le début du fichier), piste 0/1/2, durée tenue (0 = note simple)]
+  const NOTES = [[2.62,0,0],[2.99,0,0],[3.47,0,0.6],[4.27,2,0.51],[4.91,1,0],[5.09,1,0],[5.29,0,0.56],[6.01,1,0],[6.24,0,0.53],[6.96,2,0],[7.19,1,0.58],[7.91,0,0],[8.13,1,0.43],[8.69,0,0],[8.88,0,0],[9.03,0,0],[9.21,2,0.41],[9.76,1,0],[10.21,0,0.51],[10.88,1,0],[11.15,0,0.54],[11.88,1,0],[12.14,0,0],[12.56,2,0],[13.03,0,0.57],[13.88,1,0],[14.16,0,0.48],[14.86,1,0],[15.09,0,0.43],[15.78,1,0],[16.09,0,0],[16.54,2,0],[16.99,0,0],[17.86,2,0],[18.18,2,0],[18.5,0,1.08],[18.51,2,0],[18.96,2,0.57],[19.79,2,0],[20.1,2,0],[20.37,0,0],[20.37,2,0],[20.83,0,0.68],[20.84,2,0.53],[21.68,1,0],[21.91,1,0],[22.16,1,0],[22.18,0,0.43],[22.73,0,0.61],[22.73,1,0.56],[23.46,2,0],[23.71,2,0],[23.98,0,0],[23.99,2,0],[24.5,0,0.58],[24.51,2,0.55],[25.33,1,0],[25.65,1,0],[25.95,1,0],[25.95,0,0],[26.45,0,0.5],[26.45,1,0.51],[27.26,2,0],[27.53,2,0],[27.83,1,0],[27.83,0,0],[28.3,1,0.55],[28.3,0,0.58],[29.08,2,0],[29.4,2,0],[29.7,0,0],[29.71,1,0],[30.26,0,0.53],[30.26,1,0.51],[31.06,2,0],[31.08,0,0],[31.38,0,0],[31.38,2,0],[31.66,0,0],[31.66,2,0],[32.11,2,0.5],[32.13,0,0.48],[33.01,1,0.71],[33.03,2,0.68],[33.05,0,0.7]];
+  const LEAD = 1.6;          // temps (s) pour qu'une note descende de la télé jusqu'à la ligne
+  const WIN = .15;           // tolérance (s) avant / après la ligne
+  const PENALITE = .5;       // points perdus en tapant sur une piste vide
+  const LANE_C = [COL.orange, COL.pink, COL.green];
+  const CHATS = [LOOKS.brabus, LOOKS.prince, LOOKS.winkle];
+  const TOP = 190, HIT = 560, HW0 = 34, HW1 = 172, K = 2.6;
+
+  let song = null, decoding = false;   // la chanson décodée (gardée d'une partie à l'autre)
+  let G = null;
+
+  // ---------- ses notes à lui (mode Enregistrer, seulement en mode TEST) ----------
+  // gardées sur son téléphone ; le « code » est à envoyer à Claude pour les mettre dans le jeu pour tout le monde
+  const CLE = 'bourdinerf-bb-notes';
+  function sesNotes(){ try { const v = JSON.parse(localStorage.getItem(CLE)); return Array.isArray(v) && v.length ? v : null; } catch (e){ return null; } }
+  function garde(notes){ try { localStorage.setItem(CLE, JSON.stringify(notes)); } catch (e) {} }
+  const partition = () => (typeof SAVE !== 'undefined' && SAVE.test && sesNotes()) || NOTES;
+  const code = notes => 'BB1:' + JSON.stringify(notes);
+  function copie(s){
+    let ok = false;
+    try { const ta = document.createElement('textarea'); ta.value = s; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;font-size:16px';
+      document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, s.length); ok = document.execCommand('copy'); document.body.removeChild(ta); } catch (e) {}
+    try { if (navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(s).then(() => { if (G) G.copie = 2; }, () => {}); } } catch (e) {}
+    if (ok && G) G.copie = 2;
+  }
+  // boutons propres à l'épreuve (dessinés avec le style du jeu)
+  const BTN = {
+    choix: [{ id: 'jouer', x: 70, y: 300, w: 220, h: 66, label: 'Jouer', color: COL.green }, { id: 'rec', x: 70, y: 390, w: 220, h: 66, label: 'Enregistrer', color: COL.pink }],
+    finRec: [{ id: 'essayer', x: 70, y: 330, w: 220, h: 62, label: 'Essayer', color: COL.green }, { id: 'copier', x: 70, y: 408, w: 220, h: 62, label: 'Copier le code', color: COL.violet }, { id: 'refaire', x: 70, y: 486, w: 220, h: 62, label: 'Recommencer', color: COL.orange }]
+  };
+  const btnAt = p => (BTN[G && G.mode] || []).find(b => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h);
+
+  function ln(pts, w, c){ ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.lineWidth = w; ctx.strokeStyle = c; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke(); }
+  function ell(x, y, rx, ry, fill, lw = 3, rot = 0){ ctx.beginPath(); ctx.ellipse(x, y, Math.max(.5, rx), Math.max(.5, ry), rot, 0, Math.PI * 2); if (fill){ ctx.fillStyle = fill; ctx.fill(); } if (lw){ ctx.lineWidth = lw; ctx.strokeStyle = COL.ink; ctx.stroke(); } }
+  function tri(pts, fill, lw = 3){ ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); if (lw){ ctx.lineWidth = lw; ctx.strokeStyle = COL.ink; ctx.lineJoin = 'round'; ctx.stroke(); } }
+  function poly(pts, fill){ ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); }
+
+  // ---------- la chanson ----------
+  function decode(){
+    if (song || decoding || typeof actx === 'undefined' || !actx) return;
+    const b64 = window.BOURDI_VOIX && window.BOURDI_VOIX.bb_chanson; if (!b64) return;
+    decoding = true;
+    try {
+      const bin = atob(b64), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+      actx.decodeAudioData(u8.buffer, b => { song = b; decoding = false; }, () => { decoding = false; });
+    } catch (e){ decoding = false; }
+  }
+  const latence = () => (actx && (actx.outputLatency || actx.baseLatency)) || 0;
+  function joue(pos){
+    arrete();
+    G.pos0 = pos; G.t0 = actx.currentTime;
+    if (!song || !SAVE.sound) return;
+    const s = actx.createBufferSource(), g = actx.createGain(); s.buffer = song; g.gain.value = 1.5;
+    s.connect(g).connect(actx.destination); s.start(0, Math.max(0, pos)); G.src = s;
+  }
+  function arrete(){ if (G && G.src){ try { G.src.stop(); } catch (e) {} G.src = null; } }
+  // position dans la chanson (ce qu'on entend en ce moment)
+  const tps = () => !G.play ? G.pos0 : G.pos0 + (actx.currentTime - G.t0) - latence();
+
+  // sécurité : si on quitte l'épreuve (menu, pause, onglet caché), la chanson s'arrête
+  setInterval(() => {
+    if (!G || !G.play) return;
+    const parti = typeof scene === 'undefined' || scene !== 'play' || cur == null || cur.id !== 'brokeband' || G.id !== runId;
+    if (parti || paused || document.hidden){ G.pos0 = tps() + latence(); G.play = false; arrete(); if (parti) G = null; }
+  }, 100);
+
+  // ---------- partie ----------
+  // mode : 'choix' (mode TEST : Jouer / Enregistrer), 'jeu', 'rec' (il tape ses notes), 'finRec'
+  function nouvellePartie(mode){
+    if (G) arrete();
+    const P = mode === 'rec' ? [] : partition();
+    G = { id: runId, mode: mode || 'jeu', t: 0, play: false, pos0: 0, t0: 0, src: null, fini: false, pts: 0,
+      notes: P.map(([t, l, h]) => ({ t, l, h, etat: 0, fait: 0 })),   // etat : 0 à venir, 1 tenue en cours, 2 réussie, 3 ratée, 4 enregistrée
+      fin: P.reduce((m, n) => Math.max(m, n[0] + n[2]), 0) + 1.4,
+      tiens: {}, chat: [0, 0, 0].map(() => ({ saut: 0, rate: 0, joue: 0 })), flash: [0, 0, 0], aToi: 0, copie: 0, nRec: 0 };
+    decode();
+  }
+  // fin de l'enregistrement : on range ses notes (les trop serrées sur la même piste sont fusionnées)
+  function finRec(){
+    G.play = false; arrete();
+    for (const k in G.tiens){ const n = G.tiens[k]; n.h = Math.max(0, tps() - n.t); }
+    G.tiens = {};
+    const out = [], der = [-9, -9, -9];
+    G.notes.slice().sort((a, b) => a.t - b.t).forEach(n => {
+      if (n.t - der[n.l] < .12) return;
+      der[n.l] = n.t;
+      out.push([Math.round(n.t * 100) / 100, n.l, n.h >= .35 ? Math.round(n.h * 100) / 100 : 0]);
+    });
+    if (out.length) garde(out);
+    G.rec = out; G.nRec = out.length; G.mode = 'finRec';
+  }
+
+  function rate(l){
+    if (!A.voix('bb_rate' + (l + 1))) A.sons.erreur();
+    G.chat[l].rate = .6; G.flash[l] = .35; A.secousse(4, .15);
+  }
+  function credit(n, v){ n.fait = v; G.pts += v; }
+
+  function update(dt){
+    if (!G) return;
+    G.t += dt;
+    G.chat.forEach(c => { c.saut = Math.max(0, c.saut - dt * 3); c.rate = Math.max(0, c.rate - dt); });
+    G.flash = G.flash.map(f => Math.max(0, f - dt));
+    G.copie = Math.max(0, G.copie - dt);
+    if (G.mode === 'choix' || G.mode === 'finRec') return;
+    if (G.mode === 'rec'){
+      if (!G.play){ decode(); if (!actx || (!song && G.t < 1.5)) return; G.play = true; joue(G.pos0); return; }
+      const t = tps();
+      for (const k in G.tiens) G.tiens[k].h = Math.max(0, t - G.tiens[k].t);
+      G.chat.forEach((c, l) => { c.joue = Object.values(G.tiens).some(n => n.l === l) ? 1 : 0; });
+      if (t > (song ? song.duration : 36) + .3) finRec();
+      return;
+    }
+    if (!G.play){
+      decode();
+      // on attend que la chanson soit prête (au plus 1,5 s), puis on la lance
+      if (G.fini || !actx || (!song && G.t < 1.5)) return;
+      G.play = true; joue(G.pos0);
+      if (G.pos0 === 0) G.aToi = 2;
+    }
+    G.aToi = Math.max(0, G.aToi - dt);
+    const t = tps();
+    for (const n of G.notes){
+      if (n.etat === 0 && t - n.t > WIN){ n.etat = 3; rate(n.l); }
+      if (n.etat === 1){
+        G.chat[n.l].joue = 1;
+        if (t >= n.t + n.h){ n.etat = 2; credit(n, 1); A.particules(laneX(n.l, 1), HIT, 14, { colors: [LANE_C[n.l], COL.yellow, COL.white] }); for (const k in G.tiens) if (G.tiens[k] === n) delete G.tiens[k]; }
+      }
+    }
+    G.chat.forEach((c, l) => { if (!G.notes.some(n => n.etat === 1 && n.l === l)) c.joue = 0; });
+    if (!G.fini && t > G.fin){
+      G.fini = true; G.play = false; arrete();
+      A.fin({ score: Math.max(0, Math.round(G.pts / Math.max(1, G.notes.length) * 100)) });
+    }
+  }
+
+  const laneOf = x => x < 120 ? 0 : x < 240 ? 1 : 2;
+  function down(p, id){
+    if (!G) return;
+    if (G.mode === 'choix' || G.mode === 'finRec'){ const b = btnAt(p); G.appui = b ? b.id : null; if (b) A.sons.tap(); return; }
+    if (!G.play || p.y < 150) return;
+    const l = laneOf(p.x), t = tps();
+    if (G.mode === 'rec'){
+      const n = { t, l, h: 0, etat: 4, fait: 0 };
+      G.notes.push(n); G.tiens[id] = n; G.chat[l].saut = 1;
+      A.particules(laneX(l, 1), HIT, 8, { colors: [LANE_C[l], COL.white] });
+      return;
+    }
+    if (!G.notes.length) return;
+    let best = null;
+    for (const n of G.notes) if (n.etat === 0 && n.l === l && Math.abs(n.t - t) <= WIN && (!best || Math.abs(n.t - t) < Math.abs(best.t - t))) best = n;
+    if (!best){ G.pts -= PENALITE; rate(l); return; }
+    G.chat[l].saut = 1;
+    A.particules(laneX(l, 1), HIT, 10, { colors: [LANE_C[l], COL.yellow, COL.white] });
+    if (best.h > 0){ best.etat = 1; G.tiens[id] = best; credit(best, 0); }
+    else { best.etat = 2; credit(best, 1); }
+  }
+  function up(p, id){
+    if (!G) return;
+    if (G.mode === 'choix' || G.mode === 'finRec'){
+      const b = p && btnAt(p), a = G.appui; G.appui = null;
+      if (!b || b.id !== a) return;
+      if (b.id === 'jouer') nouvellePartie('jeu');
+      else if (b.id === 'rec' || b.id === 'refaire') nouvellePartie('rec');
+      else if (b.id === 'essayer') nouvellePartie('jeu');
+      else if (b.id === 'copier') copie(code(G.rec || sesNotes() || []));
+      return;
+    }
+    if (G.mode === 'rec'){
+      if (id === 'all'){ for (const k in G.tiens) G.tiens[k].h = Math.max(0, tps() - G.tiens[k].t); G.tiens = {}; return; }
+      const n = G.tiens[id]; if (n){ n.h = Math.max(0, tps() - n.t); delete G.tiens[id]; }
+      return;
+    }
+    const lacher = n => {
+      if (n.etat !== 1) return;
+      const fr = Math.max(0, Math.min(1, (tps() - n.t) / n.h));
+      n.etat = 2; credit(n, .4 + .6 * fr);
+    };
+    if (id === 'all'){ Object.values(G.tiens).forEach(lacher); G.tiens = {}; return; }
+    const n = G.tiens[id]; if (n){ lacher(n); delete G.tiens[id]; }
+  }
+
+  // ---------- perspective ----------
+  // d = temps avant la ligne / LEAD (1 = au fond, 0 = sur la ligne) → f (0 = au fond, 1 = sur la ligne)
+  function fOf(d){ d = Math.max(-.32, d); const a = 1 / (1 + K), v = 1 / (1 + K * d); return (v - a) / (1 - a); }
+  const yOf = f => TOP + (HIT - TOP) * f;
+  const hwOf = f => HW0 + (HW1 - HW0) * f;
+  const laneX = (l, f) => 180 + (l - 1) * hwOf(f) * 2 / 3;
+
+  // ---------- dessin ----------
+  function salon(){
+    ctx.fillStyle = '#3a2a5e'; ctx.fillRect(-60, -60, 480, 840);
+    // papier peint : petites rayures
+    ctx.fillStyle = 'rgba(255,255,255,.04)'; for (let x = -40; x < 400; x += 36) ctx.fillRect(x, -60, 14, 300);
+    // parquet
+    ctx.fillStyle = '#b9814a'; ctx.fillRect(-60, 236, 480, 600);
+    ctx.strokeStyle = 'rgba(0,0,0,.12)'; ctx.lineWidth = 2;
+    for (let y = 260; y < 760; y += 34){ ctx.beginPath(); ctx.moveTo(-60, y); ctx.lineTo(420, y); ctx.stroke(); }
+    // tapis sous les chats
+    ell(180, 680, 200, 54, '#6b3fa0', 0); ell(180, 680, 176, 42, '#7d4fb4', 0);
+  }
+  function piste(t){
+    const f1 = fOf(-.3);
+    poly([[180 - HW0, TOP], [180 + HW0, TOP], [180 + hwOf(f1), yOf(f1)], [180 - hwOf(f1), yOf(f1)]], 'rgba(20,14,40,.82)');
+    for (let l = 0; l < 3; l++) if (G && G.flash[l] > 0){
+      const a = G.flash[l] / .35, x0 = f => 180 + (l / 3 * 2 - 1) * hwOf(f), x1 = f => 180 + ((l + 1) / 3 * 2 - 1) * hwOf(f);
+      poly([[x0(0), TOP], [x1(0), TOP], [x1(f1), yOf(f1)], [x0(f1), yOf(f1)]], 'rgba(255,59,59,' + (.35 * a) + ')');
+    }
+    // traits qui défilent (impression de vitesse)
+    const sp = (t / LEAD) % .25;
+    for (let d = 1 - sp; d > -.3; d -= .25){ const f = fOf(d); ln([[180 - hwOf(f), yOf(f)], [180 + hwOf(f), yOf(f)]], 1 + 2 * f, 'rgba(255,255,255,.07)'); }
+    // séparations des pistes
+    [-1 / 3, 1 / 3].forEach(k => ln([[180 + k * HW0, TOP], [180 + k * hwOf(f1), yOf(f1)]], 2, 'rgba(255,255,255,.2)'));
+    [-1, 1].forEach(k => ln([[180 + k * HW0, TOP], [180 + k * hwOf(f1), yOf(f1)]], 4, 'rgba(255,255,255,.35)'));
+    // la ligne où taper, avec un rond par piste
+    ln([[180 - HW1, HIT], [180 + HW1, HIT]], 6, COL.white);
+    for (let l = 0; l < 3; l++){
+      const pr = G && G.chat[l].saut > 0 ? G.chat[l].saut : 0, x = laneX(l, 1);
+      ell(x, HIT, 30 + pr * 6, 13 + pr * 3, 'rgba(255,255,255,.12)', 3.5, 0);
+      ctx.lineWidth = 3.5; ctx.strokeStyle = LANE_C[l]; ctx.beginPath(); ctx.ellipse(x, HIT, 30 + pr * 6, 13 + pr * 3, 0, 0, Math.PI * 2); ctx.stroke();
+    }
+  }
+  function notes(t){
+    if (!G) return;
+    // du plus loin au plus proche
+    for (let i = G.notes.length - 1; i >= 0; i--){
+      const n = G.notes[i];
+      if (n.etat === 4){
+        // mode Enregistrer : la note tapée part vers la télé
+        const dA = (t - n.t) / LEAD, dB = Math.max(0, (t - n.t - n.h) / LEAD);
+        if (dB > 1.02) continue;
+        if (dA - dB > .01){
+          const fa = fOf(Math.min(1.02, dA)), fb = fOf(dB), w = f => hwOf(f) * .11;
+          poly([[laneX(n.l, fa) - w(fa), yOf(fa)], [laneX(n.l, fa) + w(fa), yOf(fa)], [laneX(n.l, fb) + w(fb), yOf(fb)], [laneX(n.l, fb) - w(fb), yOf(fb)]], LANE_C[n.l]);
+        }
+        if (dA <= 1.02){ const f = fOf(dA), s = hwOf(f) / HW1; ell(laneX(n.l, f), yOf(f), 27 * s, 12 * s, LANE_C[n.l], Math.max(1.5, 3.5 * s)); ell(laneX(n.l, f), yOf(f) - 2 * s, 15 * s, 5 * s, 'rgba(255,255,255,.55)', 0); }
+        continue;
+      }
+      if (n.etat === 2 && n.h === 0) continue;
+      const dA = (n.t - t) / LEAD, dB = (n.t + n.h - t) / LEAD;
+      if (dA > 1.02 || dB < -.3) continue;
+      const c = n.etat === 3 ? '#6d6480' : LANE_C[n.l];
+      if (n.h > 0){
+        // la traîne de la note tenue
+        const a = n.etat === 1 ? 0 : Math.min(1.02, dA), b = Math.min(1.02, dB);
+        if (b > a && !(n.etat === 2)){
+          const fa = fOf(a), fb = fOf(b), w = f => hwOf(f) * .11;
+          poly([[laneX(n.l, fa) - w(fa), yOf(fa)], [laneX(n.l, fa) + w(fa), yOf(fa)], [laneX(n.l, fb) + w(fb), yOf(fb)], [laneX(n.l, fb) - w(fb), yOf(fb)]], c);
+          ctx.globalAlpha = .35; poly([[laneX(n.l, fa) - w(fa) * .4, yOf(fa)], [laneX(n.l, fa) + w(fa) * .4, yOf(fa)], [laneX(n.l, fb) + w(fb) * .4, yOf(fb)], [laneX(n.l, fb) - w(fb) * .4, yOf(fb)]], COL.white); ctx.globalAlpha = 1;
+        }
+        if (n.etat === 1 || n.etat === 2) continue;
+      }
+      if (dA > 1.02) continue;
+      const f = fOf(dA), x = laneX(n.l, f), y = yOf(f), s = hwOf(f) / HW1;
+      ell(x, y, 27 * s, 12 * s, c, Math.max(1.5, 3.5 * s));
+      ell(x, y - 2 * s, 15 * s, 5 * s, 'rgba(255,255,255,.55)', 0);
+    }
+  }
+  function tele(t){
+    // meuble télé
+    A.blob(84, 196, 192, 30, 8, '#7a4a2a', 4);
+    // la télé
+    A.blob(56, 70, 248, 136, 14, '#2b2838', 5);
+    A.rr(68, 82, 224, 112, 8); ctx.fillStyle = '#0f1a3d'; ctx.fill();
+    ctx.save(); A.rr(68, 82, 224, 112, 8); ctx.clip();
+    // traits de hauteur : aigu en haut, grave en bas ; ils défilent vers la gauche
+    const NX = 110, SPD = 52, rowY = [170, 138, 106];
+    rowY.forEach(y => { ctx.fillStyle = 'rgba(255,255,255,.05)'; ctx.fillRect(68, y - 1, 224, 2); });
+    if (G) for (const n of G.notes){
+      const x0 = NX + (n.t - t) * SPD, x1 = x0 + Math.max(.18, n.h) * SPD;
+      if (x1 < 60 || x0 > 300) continue;
+      const ok = n.etat === 2 || n.etat === 1, bad = n.etat === 3;
+      ctx.globalAlpha = bad ? .3 : ok ? 1 : .75;
+      A.rr(x0, rowY[n.l] - 5, x1 - x0, 10, 5); ctx.fillStyle = bad ? '#6d6480' : LANE_C[n.l]; ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    ln([[NX, 88], [NX, 188]], 3, 'rgba(255,255,255,.7)');
+    if (G && G.mode === 'rec') A.txt('Tape tes notes !', 180, 100, 18, COL.yellow, { lw: 5 });
+    if (G && G.aToi > 0){
+      const k = Math.min(1, (2 - G.aToi) * 5), sc = 1 + (1 - k) * .4;
+      ctx.save(); ctx.translate(180, 140); ctx.scale(sc, sc); A.txt('À toi !', 0, 0, 40, COL.yellow, { lw: 8 }); ctx.restore();
+    }
+    ctx.restore();
+    // reflet + petit voyant
+    ctx.fillStyle = 'rgba(255,255,255,.06)'; ctx.beginPath(); ctx.moveTo(72, 86); ctx.lineTo(150, 86); ctx.lineTo(96, 190); ctx.lineTo(72, 190); ctx.closePath(); ctx.fill();
+    A.circle(286, 200, 3, G && G.play ? '#ff4040' : '#552', 0);
+  }
+  // un chat vu de dos, pieds en (x, y)
+  function chatDos(L, x, y, s, c, t, l){
+    const saut = c ? c.saut : 0, joue = c ? c.joue : 0, rt = c ? c.rate : 0;
+    const bob = joue ? Math.abs(Math.sin(t * 14)) * 5 : 0, lift = saut * 12 + bob;
+    ctx.save(); ctx.translate(x, y - lift); ctx.scale(s, s);
+    const pt = L.point;
+    // queue qui remue
+    const q = Math.sin(t * (joue ? 10 : 2.5) + l) * 10;
+    ln([[0, -8], [30, -6], [40 + q * .3, -30 + q]], 13, COL.ink); ln([[0, -8], [30, -6], [40 + q * .3, -30 + q]], 7, L.mask ? pt : L.body);
+    // corps
+    ell(0, -34, 30, 36, L.body);
+    if (L.mask){ ctx.save(); ctx.beginPath(); ctx.ellipse(0, -34, 28.5, 34.5, 0, 0, Math.PI * 2); ctx.clip(); ell(0, -2, 26, 16, 'rgba(0,0,0,.08)', 0); ctx.restore(); }
+    // tête (penchée quand il rate)
+    const hy = -82, rot = rt > 0 ? Math.sin(rt * 30) * .25 : (joue ? Math.sin(t * 14) * .08 : 0);
+    ctx.save(); ctx.translate(0, hy); ctx.rotate(rot);
+    [[-1], [1]].forEach(([sx]) => { tri([[sx * 24, -4], [sx * 18, -36], [sx * 3, -20]], pt); tri([[sx * 20, -9], [sx * 17, -28], [sx * 9, -19]], L.mask ? '#c9a58e' : '#6f7884', 0); });
+    ell(0, 0, 26, 23, L.body);
+    if (L.mask){ ctx.save(); ctx.beginPath(); ctx.ellipse(0, 0, 24.5, 21.5, 0, 0, Math.PI * 2); ctx.clip(); ell(0, -24, 30, 12, pt, 0); ctx.restore(); }
+    ctx.restore();
+    // petites étoiles quand il réussit
+    if (saut > .3) for (let i = 0; i < 3; i++){ const a = -Math.PI / 2 + (i - 1) * .7; A.star(Math.cos(a) * 46, hy + Math.sin(a) * 46, 7 * saut, COL.yellow, 2); }
+    ctx.restore();
+  }
+  function chats(t){ for (let l = 0; l < 3; l++) chatDos(CHATS[l], laneX(l, 1), 708, l === 0 ? 1.05 : .98, G && G.chat[l], t, l); }
+
+  function draw(c){
+    ctx = c || A.ctx();
+    const t = G ? tps() : 0, T = G ? G.t : 0;
+    salon(); piste(t); notes(t); tele(t); chats(T);
+    if (!G) return;
+    if (G.mode === 'jeu' && G.notes.length) A.txt(Math.max(0, Math.round(G.pts / G.notes.length * 100)) + ' %', 20, 44, 26, COL.white, { align: 'left', lw: 6 });
+    if (G.mode === 'finRec'){
+      A.blob(40, 236, 280, 336, 26, 'rgba(255,255,255,.95)', 5);
+      A.txt(G.nRec + ' notes', 180, 285, 38, COL.violet, { lw: 0 });
+    }
+    (BTN[G.mode] || []).forEach(b => button('bb-' + b.id, b.x, b.y, b.w, b.h, b.label, { color: b.color }));
+    if (G.copie > 0) A.txt('Code copié !', 180, 600, 30, COL.yellow, { lw: 7 });
+  }
+
+  function vignette(c, x, y, w, h, t){
+    const old = ctx; ctx = c; const k = h / 230;
+    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-180, -230);
+    c.fillStyle = '#3a2a5e'; c.fillRect(-120, -20, 600, 260); c.fillStyle = '#b9814a'; c.fillRect(-120, 120, 600, 140);
+    A.blob(110, 20, 140, 84, 10, '#2b2838', 4); A.rr(118, 28, 124, 68, 6); c.fillStyle = '#0f1a3d'; c.fill();
+    [[150, 76, 0], [186, 56, 1], [222, 40, 2]].forEach(([xx, yy, l]) => { A.rr(xx - 16, yy - 4, 32 + Math.sin(t * 3 + l) * 6, 8, 4); c.fillStyle = LANE_C[l]; c.fill(); });
+    poly([[155, 104], [205, 104], [290, 210], [70, 210]], 'rgba(20,14,40,.8)');
+    const o = [Math.max(0, Math.sin(t * 5)), Math.max(0, Math.sin(t * 5 + 2)), Math.max(0, Math.sin(t * 5 + 4))];
+    for (let l = 0; l < 3; l++) chatDos(CHATS[l], 100 + l * 80, 232, .8, { saut: o[l] * .6, joue: 0, rate: 0 }, t, l);
+    c.restore(); ctx = old;
+  }
+
+  Bourdi.ajouter({
+    id: 'brokeband', titre: 'broke band', court: 'broke band',
+    consigne: 'Tape quand la note arrive sur la ligne. Note longue : garde le doigt appuyé !',
+    plusPetitGagne: false,
+    seuils: { S: 92, A: 82, B: 70, C: 55, D: 38 },
+    format: n => Math.max(0, Math.round(n)) + ' %',
+    musique: 'aucune', vignette,
+    start(){ ctx = A.ctx(); nouvellePartie(SAVE.test ? 'choix' : 'jeu'); },
+    update, draw, down, up, etat: () => G, NOTES, tps: () => G ? tps() : 0
+  });
+})();
+
+</script>
+<script>
+'use strict';
+// =====================================================================
 //  ÉPREUVE 22 — LE CONCERT DU PATOU   (OFFICIELLE le 13 nov.)
 //  Un « Simon » en fanfare. Une fanfare de village joue tout le temps
 //  (tuba « oum », accords « pa », caisse claire), calée sur les mesures.
@@ -5559,388 +5941,13 @@ pseudoShow(scene === 'name');
     consigne: 'Écoute les animaux chanter. Puis, à toi : tape sur eux dans le même ordre, au même rythme !',
     // (textes validés le 10 nov. ; « Manche 2 · 1/2 » validé aussi)
     plusPetitGagne: false,
-    seuils: { S: 92, A: 82, B: 70, C: 55, D: 38 },
+    seuils: { S: 92, A: 82, B: 70, C: 40, D: 38 },   // 14 nov. : C à 40 % (son choix, sinon impossible d'ouvrir la suite)
     format: n => Math.max(0, Math.round(n)) + ' %',
     musique: 'aucune', vignette,
     start(){ ctx = A.ctx(); nouvellePartie(); },
     update, draw, down, etat: () => G,
     // pour vérifier : la hauteur trouvée pour chaque voix (Hz) et la vitesse de lecture de la note de base
     hauteurs: () => ORDRE.map(k => { const b = typeof voixBuf !== 'undefined' && voixBuf['c_' + k]; if (!b) return k + ' ?'; const I = info(b); return k + ' ' + Math.round(I.f0 || 0) + ' Hz x' + vitesse(I.f0, 0).toFixed(2); })
-  });
-})();
-
-</script>
-<script>
-'use strict';
-// =====================================================================
-//  ÉPREUVE 23 — broke band   (OFFICIELLE le 14 nov. ; mode Enregistrer seulement en mode TEST)
-//  Esprit « groupe de rock » : Brabus, Prince et Winkle sont assis de dos
-//  devant la télé du salon. Sa chanson (voix.js : bb_chanson) passe, et
-//  les notes arrivent sur 3 pistes en perspective qui sortent de la télé :
-//    gauche = Brabus (notes graves), milieu = Prince, droite = Winkle (aiguës).
-//  Tape quand la note touche la ligne. Note tenue (longue traîne) : garde
-//  le doigt appuyé jusqu'au bout.
-//  Note ratée (ou tape sur une piste vide) = sa fausse note (bb_rate1/2/3,
-//  une par piste) et on perd des points. Pas de vies : la chanson va au bout.
-//  La télé montre seulement des traits de hauteur (pas de paroles).
-//  Partition repérée dans sa voix : outils/broke_band_notes.json
-//  Score = précision en %.
-//  Textes validés le 14 nov. : titre « broke band », consigne, « % », « À toi ! ».
-// =====================================================================
-(() => {
-  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', green: '#7ad81e', pink: '#ff4fa3', violet: '#8a3ffc' };
-  const A = Bourdi.api; let ctx = A.ctx();
-  const LOOKS = Bourdi.chats.LOOKS;
-
-  // SES notes, tapées par lui (mode Enregistrer, 14 nov.)
-  // [temps (s depuis le début du fichier), piste 0/1/2, durée tenue (0 = note simple)]
-  const NOTES = [[2.62,0,0],[2.99,0,0],[3.47,0,0.6],[4.27,2,0.51],[4.91,1,0],[5.09,1,0],[5.29,0,0.56],[6.01,1,0],[6.24,0,0.53],[6.96,2,0],[7.19,1,0.58],[7.91,0,0],[8.13,1,0.43],[8.69,0,0],[8.88,0,0],[9.03,0,0],[9.21,2,0.41],[9.76,1,0],[10.21,0,0.51],[10.88,1,0],[11.15,0,0.54],[11.88,1,0],[12.14,0,0],[12.56,2,0],[13.03,0,0.57],[13.88,1,0],[14.16,0,0.48],[14.86,1,0],[15.09,0,0.43],[15.78,1,0],[16.09,0,0],[16.54,2,0],[16.99,0,0],[17.86,2,0],[18.18,2,0],[18.5,0,1.08],[18.51,2,0],[18.96,2,0.57],[19.79,2,0],[20.1,2,0],[20.37,0,0],[20.37,2,0],[20.83,0,0.68],[20.84,2,0.53],[21.68,1,0],[21.91,1,0],[22.16,1,0],[22.18,0,0.43],[22.73,0,0.61],[22.73,1,0.56],[23.46,2,0],[23.71,2,0],[23.98,0,0],[23.99,2,0],[24.5,0,0.58],[24.51,2,0.55],[25.33,1,0],[25.65,1,0],[25.95,1,0],[25.95,0,0],[26.45,0,0.5],[26.45,1,0.51],[27.26,2,0],[27.53,2,0],[27.83,1,0],[27.83,0,0],[28.3,1,0.55],[28.3,0,0.58],[29.08,2,0],[29.4,2,0],[29.7,0,0],[29.71,1,0],[30.26,0,0.53],[30.26,1,0.51],[31.06,2,0],[31.08,0,0],[31.38,0,0],[31.38,2,0],[31.66,0,0],[31.66,2,0],[32.11,2,0.5],[32.13,0,0.48],[33.01,1,0.71],[33.03,2,0.68],[33.05,0,0.7]];
-  const LEAD = 1.6;          // temps (s) pour qu'une note descende de la télé jusqu'à la ligne
-  const WIN = .15;           // tolérance (s) avant / après la ligne
-  const PENALITE = .5;       // points perdus en tapant sur une piste vide
-  const LANE_C = [COL.orange, COL.pink, COL.green];
-  const CHATS = [LOOKS.brabus, LOOKS.prince, LOOKS.winkle];
-  const TOP = 190, HIT = 560, HW0 = 34, HW1 = 172, K = 2.6;
-
-  let song = null, decoding = false;   // la chanson décodée (gardée d'une partie à l'autre)
-  let G = null;
-
-  // ---------- ses notes à lui (mode Enregistrer, seulement en mode TEST) ----------
-  // gardées sur son téléphone ; le « code » est à envoyer à Claude pour les mettre dans le jeu pour tout le monde
-  const CLE = 'bourdinerf-bb-notes';
-  function sesNotes(){ try { const v = JSON.parse(localStorage.getItem(CLE)); return Array.isArray(v) && v.length ? v : null; } catch (e){ return null; } }
-  function garde(notes){ try { localStorage.setItem(CLE, JSON.stringify(notes)); } catch (e) {} }
-  const partition = () => (typeof SAVE !== 'undefined' && SAVE.test && sesNotes()) || NOTES;
-  const code = notes => 'BB1:' + JSON.stringify(notes);
-  function copie(s){
-    let ok = false;
-    try { const ta = document.createElement('textarea'); ta.value = s; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;font-size:16px';
-      document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, s.length); ok = document.execCommand('copy'); document.body.removeChild(ta); } catch (e) {}
-    try { if (navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(s).then(() => { if (G) G.copie = 2; }, () => {}); } } catch (e) {}
-    if (ok && G) G.copie = 2;
-  }
-  // boutons propres à l'épreuve (dessinés avec le style du jeu)
-  const BTN = {
-    choix: [{ id: 'jouer', x: 70, y: 300, w: 220, h: 66, label: 'Jouer', color: COL.green }, { id: 'rec', x: 70, y: 390, w: 220, h: 66, label: 'Enregistrer', color: COL.pink }],
-    finRec: [{ id: 'essayer', x: 70, y: 330, w: 220, h: 62, label: 'Essayer', color: COL.green }, { id: 'copier', x: 70, y: 408, w: 220, h: 62, label: 'Copier le code', color: COL.violet }, { id: 'refaire', x: 70, y: 486, w: 220, h: 62, label: 'Recommencer', color: COL.orange }]
-  };
-  const btnAt = p => (BTN[G && G.mode] || []).find(b => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h);
-
-  function ln(pts, w, c){ ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.lineWidth = w; ctx.strokeStyle = c; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke(); }
-  function ell(x, y, rx, ry, fill, lw = 3, rot = 0){ ctx.beginPath(); ctx.ellipse(x, y, Math.max(.5, rx), Math.max(.5, ry), rot, 0, Math.PI * 2); if (fill){ ctx.fillStyle = fill; ctx.fill(); } if (lw){ ctx.lineWidth = lw; ctx.strokeStyle = COL.ink; ctx.stroke(); } }
-  function tri(pts, fill, lw = 3){ ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); if (lw){ ctx.lineWidth = lw; ctx.strokeStyle = COL.ink; ctx.lineJoin = 'round'; ctx.stroke(); } }
-  function poly(pts, fill){ ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); }
-
-  // ---------- la chanson ----------
-  function decode(){
-    if (song || decoding || typeof actx === 'undefined' || !actx) return;
-    const b64 = window.BOURDI_VOIX && window.BOURDI_VOIX.bb_chanson; if (!b64) return;
-    decoding = true;
-    try {
-      const bin = atob(b64), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-      actx.decodeAudioData(u8.buffer, b => { song = b; decoding = false; }, () => { decoding = false; });
-    } catch (e){ decoding = false; }
-  }
-  const latence = () => (actx && (actx.outputLatency || actx.baseLatency)) || 0;
-  function joue(pos){
-    arrete();
-    G.pos0 = pos; G.t0 = actx.currentTime;
-    if (!song || !SAVE.sound) return;
-    const s = actx.createBufferSource(), g = actx.createGain(); s.buffer = song; g.gain.value = 1.5;
-    s.connect(g).connect(actx.destination); s.start(0, Math.max(0, pos)); G.src = s;
-  }
-  function arrete(){ if (G && G.src){ try { G.src.stop(); } catch (e) {} G.src = null; } }
-  // position dans la chanson (ce qu'on entend en ce moment)
-  const tps = () => !G.play ? G.pos0 : G.pos0 + (actx.currentTime - G.t0) - latence();
-
-  // sécurité : si on quitte l'épreuve (menu, pause, onglet caché), la chanson s'arrête
-  setInterval(() => {
-    if (!G || !G.play) return;
-    const parti = typeof scene === 'undefined' || scene !== 'play' || cur == null || cur.id !== 'brokeband' || G.id !== runId;
-    if (parti || paused || document.hidden){ G.pos0 = tps() + latence(); G.play = false; arrete(); if (parti) G = null; }
-  }, 100);
-
-  // ---------- partie ----------
-  // mode : 'choix' (mode TEST : Jouer / Enregistrer), 'jeu', 'rec' (il tape ses notes), 'finRec'
-  function nouvellePartie(mode){
-    if (G) arrete();
-    const P = mode === 'rec' ? [] : partition();
-    G = { id: runId, mode: mode || 'jeu', t: 0, play: false, pos0: 0, t0: 0, src: null, fini: false, pts: 0,
-      notes: P.map(([t, l, h]) => ({ t, l, h, etat: 0, fait: 0 })),   // etat : 0 à venir, 1 tenue en cours, 2 réussie, 3 ratée, 4 enregistrée
-      fin: P.reduce((m, n) => Math.max(m, n[0] + n[2]), 0) + 1.4,
-      tiens: {}, chat: [0, 0, 0].map(() => ({ saut: 0, rate: 0, joue: 0 })), flash: [0, 0, 0], aToi: 0, copie: 0, nRec: 0 };
-    decode();
-  }
-  // fin de l'enregistrement : on range ses notes (les trop serrées sur la même piste sont fusionnées)
-  function finRec(){
-    G.play = false; arrete();
-    for (const k in G.tiens){ const n = G.tiens[k]; n.h = Math.max(0, tps() - n.t); }
-    G.tiens = {};
-    const out = [], der = [-9, -9, -9];
-    G.notes.slice().sort((a, b) => a.t - b.t).forEach(n => {
-      if (n.t - der[n.l] < .12) return;
-      der[n.l] = n.t;
-      out.push([Math.round(n.t * 100) / 100, n.l, n.h >= .35 ? Math.round(n.h * 100) / 100 : 0]);
-    });
-    if (out.length) garde(out);
-    G.rec = out; G.nRec = out.length; G.mode = 'finRec';
-  }
-
-  function rate(l){
-    if (!A.voix('bb_rate' + (l + 1))) A.sons.erreur();
-    G.chat[l].rate = .6; G.flash[l] = .35; A.secousse(4, .15);
-  }
-  function credit(n, v){ n.fait = v; G.pts += v; }
-
-  function update(dt){
-    if (!G) return;
-    G.t += dt;
-    G.chat.forEach(c => { c.saut = Math.max(0, c.saut - dt * 3); c.rate = Math.max(0, c.rate - dt); });
-    G.flash = G.flash.map(f => Math.max(0, f - dt));
-    G.copie = Math.max(0, G.copie - dt);
-    if (G.mode === 'choix' || G.mode === 'finRec') return;
-    if (G.mode === 'rec'){
-      if (!G.play){ decode(); if (!actx || (!song && G.t < 1.5)) return; G.play = true; joue(G.pos0); return; }
-      const t = tps();
-      for (const k in G.tiens) G.tiens[k].h = Math.max(0, t - G.tiens[k].t);
-      G.chat.forEach((c, l) => { c.joue = Object.values(G.tiens).some(n => n.l === l) ? 1 : 0; });
-      if (t > (song ? song.duration : 36) + .3) finRec();
-      return;
-    }
-    if (!G.play){
-      decode();
-      // on attend que la chanson soit prête (au plus 1,5 s), puis on la lance
-      if (G.fini || !actx || (!song && G.t < 1.5)) return;
-      G.play = true; joue(G.pos0);
-      if (G.pos0 === 0) G.aToi = 2;
-    }
-    G.aToi = Math.max(0, G.aToi - dt);
-    const t = tps();
-    for (const n of G.notes){
-      if (n.etat === 0 && t - n.t > WIN){ n.etat = 3; rate(n.l); }
-      if (n.etat === 1){
-        G.chat[n.l].joue = 1;
-        if (t >= n.t + n.h){ n.etat = 2; credit(n, 1); A.particules(laneX(n.l, 1), HIT, 14, { colors: [LANE_C[n.l], COL.yellow, COL.white] }); for (const k in G.tiens) if (G.tiens[k] === n) delete G.tiens[k]; }
-      }
-    }
-    G.chat.forEach((c, l) => { if (!G.notes.some(n => n.etat === 1 && n.l === l)) c.joue = 0; });
-    if (!G.fini && t > G.fin){
-      G.fini = true; G.play = false; arrete();
-      A.fin({ score: Math.max(0, Math.round(G.pts / Math.max(1, G.notes.length) * 100)) });
-    }
-  }
-
-  const laneOf = x => x < 120 ? 0 : x < 240 ? 1 : 2;
-  function down(p, id){
-    if (!G) return;
-    if (G.mode === 'choix' || G.mode === 'finRec'){ const b = btnAt(p); G.appui = b ? b.id : null; if (b) A.sons.tap(); return; }
-    if (!G.play || p.y < 150) return;
-    const l = laneOf(p.x), t = tps();
-    if (G.mode === 'rec'){
-      const n = { t, l, h: 0, etat: 4, fait: 0 };
-      G.notes.push(n); G.tiens[id] = n; G.chat[l].saut = 1;
-      A.particules(laneX(l, 1), HIT, 8, { colors: [LANE_C[l], COL.white] });
-      return;
-    }
-    if (!G.notes.length) return;
-    let best = null;
-    for (const n of G.notes) if (n.etat === 0 && n.l === l && Math.abs(n.t - t) <= WIN && (!best || Math.abs(n.t - t) < Math.abs(best.t - t))) best = n;
-    if (!best){ G.pts -= PENALITE; rate(l); return; }
-    G.chat[l].saut = 1;
-    A.particules(laneX(l, 1), HIT, 10, { colors: [LANE_C[l], COL.yellow, COL.white] });
-    if (best.h > 0){ best.etat = 1; G.tiens[id] = best; credit(best, 0); }
-    else { best.etat = 2; credit(best, 1); }
-  }
-  function up(p, id){
-    if (!G) return;
-    if (G.mode === 'choix' || G.mode === 'finRec'){
-      const b = p && btnAt(p), a = G.appui; G.appui = null;
-      if (!b || b.id !== a) return;
-      if (b.id === 'jouer') nouvellePartie('jeu');
-      else if (b.id === 'rec' || b.id === 'refaire') nouvellePartie('rec');
-      else if (b.id === 'essayer') nouvellePartie('jeu');
-      else if (b.id === 'copier') copie(code(G.rec || sesNotes() || []));
-      return;
-    }
-    if (G.mode === 'rec'){
-      if (id === 'all'){ for (const k in G.tiens) G.tiens[k].h = Math.max(0, tps() - G.tiens[k].t); G.tiens = {}; return; }
-      const n = G.tiens[id]; if (n){ n.h = Math.max(0, tps() - n.t); delete G.tiens[id]; }
-      return;
-    }
-    const lacher = n => {
-      if (n.etat !== 1) return;
-      const fr = Math.max(0, Math.min(1, (tps() - n.t) / n.h));
-      n.etat = 2; credit(n, .4 + .6 * fr);
-    };
-    if (id === 'all'){ Object.values(G.tiens).forEach(lacher); G.tiens = {}; return; }
-    const n = G.tiens[id]; if (n){ lacher(n); delete G.tiens[id]; }
-  }
-
-  // ---------- perspective ----------
-  // d = temps avant la ligne / LEAD (1 = au fond, 0 = sur la ligne) → f (0 = au fond, 1 = sur la ligne)
-  function fOf(d){ d = Math.max(-.32, d); const a = 1 / (1 + K), v = 1 / (1 + K * d); return (v - a) / (1 - a); }
-  const yOf = f => TOP + (HIT - TOP) * f;
-  const hwOf = f => HW0 + (HW1 - HW0) * f;
-  const laneX = (l, f) => 180 + (l - 1) * hwOf(f) * 2 / 3;
-
-  // ---------- dessin ----------
-  function salon(){
-    ctx.fillStyle = '#3a2a5e'; ctx.fillRect(-60, -60, 480, 840);
-    // papier peint : petites rayures
-    ctx.fillStyle = 'rgba(255,255,255,.04)'; for (let x = -40; x < 400; x += 36) ctx.fillRect(x, -60, 14, 300);
-    // parquet
-    ctx.fillStyle = '#b9814a'; ctx.fillRect(-60, 236, 480, 600);
-    ctx.strokeStyle = 'rgba(0,0,0,.12)'; ctx.lineWidth = 2;
-    for (let y = 260; y < 760; y += 34){ ctx.beginPath(); ctx.moveTo(-60, y); ctx.lineTo(420, y); ctx.stroke(); }
-    // tapis sous les chats
-    ell(180, 680, 200, 54, '#6b3fa0', 0); ell(180, 680, 176, 42, '#7d4fb4', 0);
-  }
-  function piste(t){
-    const f1 = fOf(-.3);
-    poly([[180 - HW0, TOP], [180 + HW0, TOP], [180 + hwOf(f1), yOf(f1)], [180 - hwOf(f1), yOf(f1)]], 'rgba(20,14,40,.82)');
-    for (let l = 0; l < 3; l++) if (G && G.flash[l] > 0){
-      const a = G.flash[l] / .35, x0 = f => 180 + (l / 3 * 2 - 1) * hwOf(f), x1 = f => 180 + ((l + 1) / 3 * 2 - 1) * hwOf(f);
-      poly([[x0(0), TOP], [x1(0), TOP], [x1(f1), yOf(f1)], [x0(f1), yOf(f1)]], 'rgba(255,59,59,' + (.35 * a) + ')');
-    }
-    // traits qui défilent (impression de vitesse)
-    const sp = (t / LEAD) % .25;
-    for (let d = 1 - sp; d > -.3; d -= .25){ const f = fOf(d); ln([[180 - hwOf(f), yOf(f)], [180 + hwOf(f), yOf(f)]], 1 + 2 * f, 'rgba(255,255,255,.07)'); }
-    // séparations des pistes
-    [-1 / 3, 1 / 3].forEach(k => ln([[180 + k * HW0, TOP], [180 + k * hwOf(f1), yOf(f1)]], 2, 'rgba(255,255,255,.2)'));
-    [-1, 1].forEach(k => ln([[180 + k * HW0, TOP], [180 + k * hwOf(f1), yOf(f1)]], 4, 'rgba(255,255,255,.35)'));
-    // la ligne où taper, avec un rond par piste
-    ln([[180 - HW1, HIT], [180 + HW1, HIT]], 6, COL.white);
-    for (let l = 0; l < 3; l++){
-      const pr = G && G.chat[l].saut > 0 ? G.chat[l].saut : 0, x = laneX(l, 1);
-      ell(x, HIT, 30 + pr * 6, 13 + pr * 3, 'rgba(255,255,255,.12)', 3.5, 0);
-      ctx.lineWidth = 3.5; ctx.strokeStyle = LANE_C[l]; ctx.beginPath(); ctx.ellipse(x, HIT, 30 + pr * 6, 13 + pr * 3, 0, 0, Math.PI * 2); ctx.stroke();
-    }
-  }
-  function notes(t){
-    if (!G) return;
-    // du plus loin au plus proche
-    for (let i = G.notes.length - 1; i >= 0; i--){
-      const n = G.notes[i];
-      if (n.etat === 4){
-        // mode Enregistrer : la note tapée part vers la télé
-        const dA = (t - n.t) / LEAD, dB = Math.max(0, (t - n.t - n.h) / LEAD);
-        if (dB > 1.02) continue;
-        if (dA - dB > .01){
-          const fa = fOf(Math.min(1.02, dA)), fb = fOf(dB), w = f => hwOf(f) * .11;
-          poly([[laneX(n.l, fa) - w(fa), yOf(fa)], [laneX(n.l, fa) + w(fa), yOf(fa)], [laneX(n.l, fb) + w(fb), yOf(fb)], [laneX(n.l, fb) - w(fb), yOf(fb)]], LANE_C[n.l]);
-        }
-        if (dA <= 1.02){ const f = fOf(dA), s = hwOf(f) / HW1; ell(laneX(n.l, f), yOf(f), 27 * s, 12 * s, LANE_C[n.l], Math.max(1.5, 3.5 * s)); ell(laneX(n.l, f), yOf(f) - 2 * s, 15 * s, 5 * s, 'rgba(255,255,255,.55)', 0); }
-        continue;
-      }
-      if (n.etat === 2 && n.h === 0) continue;
-      const dA = (n.t - t) / LEAD, dB = (n.t + n.h - t) / LEAD;
-      if (dA > 1.02 || dB < -.3) continue;
-      const c = n.etat === 3 ? '#6d6480' : LANE_C[n.l];
-      if (n.h > 0){
-        // la traîne de la note tenue
-        const a = n.etat === 1 ? 0 : Math.min(1.02, dA), b = Math.min(1.02, dB);
-        if (b > a && !(n.etat === 2)){
-          const fa = fOf(a), fb = fOf(b), w = f => hwOf(f) * .11;
-          poly([[laneX(n.l, fa) - w(fa), yOf(fa)], [laneX(n.l, fa) + w(fa), yOf(fa)], [laneX(n.l, fb) + w(fb), yOf(fb)], [laneX(n.l, fb) - w(fb), yOf(fb)]], c);
-          ctx.globalAlpha = .35; poly([[laneX(n.l, fa) - w(fa) * .4, yOf(fa)], [laneX(n.l, fa) + w(fa) * .4, yOf(fa)], [laneX(n.l, fb) + w(fb) * .4, yOf(fb)], [laneX(n.l, fb) - w(fb) * .4, yOf(fb)]], COL.white); ctx.globalAlpha = 1;
-        }
-        if (n.etat === 1 || n.etat === 2) continue;
-      }
-      if (dA > 1.02) continue;
-      const f = fOf(dA), x = laneX(n.l, f), y = yOf(f), s = hwOf(f) / HW1;
-      ell(x, y, 27 * s, 12 * s, c, Math.max(1.5, 3.5 * s));
-      ell(x, y - 2 * s, 15 * s, 5 * s, 'rgba(255,255,255,.55)', 0);
-    }
-  }
-  function tele(t){
-    // meuble télé
-    A.blob(84, 196, 192, 30, 8, '#7a4a2a', 4);
-    // la télé
-    A.blob(56, 70, 248, 136, 14, '#2b2838', 5);
-    A.rr(68, 82, 224, 112, 8); ctx.fillStyle = '#0f1a3d'; ctx.fill();
-    ctx.save(); A.rr(68, 82, 224, 112, 8); ctx.clip();
-    // traits de hauteur : aigu en haut, grave en bas ; ils défilent vers la gauche
-    const NX = 110, SPD = 52, rowY = [170, 138, 106];
-    rowY.forEach(y => { ctx.fillStyle = 'rgba(255,255,255,.05)'; ctx.fillRect(68, y - 1, 224, 2); });
-    if (G) for (const n of G.notes){
-      const x0 = NX + (n.t - t) * SPD, x1 = x0 + Math.max(.18, n.h) * SPD;
-      if (x1 < 60 || x0 > 300) continue;
-      const ok = n.etat === 2 || n.etat === 1, bad = n.etat === 3;
-      ctx.globalAlpha = bad ? .3 : ok ? 1 : .75;
-      A.rr(x0, rowY[n.l] - 5, x1 - x0, 10, 5); ctx.fillStyle = bad ? '#6d6480' : LANE_C[n.l]; ctx.fill();
-      ctx.globalAlpha = 1;
-    }
-    ln([[NX, 88], [NX, 188]], 3, 'rgba(255,255,255,.7)');
-    if (G && G.mode === 'rec') A.txt('Tape tes notes !', 180, 100, 18, COL.yellow, { lw: 5 });
-    if (G && G.aToi > 0){
-      const k = Math.min(1, (2 - G.aToi) * 5), sc = 1 + (1 - k) * .4;
-      ctx.save(); ctx.translate(180, 140); ctx.scale(sc, sc); A.txt('À toi !', 0, 0, 40, COL.yellow, { lw: 8 }); ctx.restore();
-    }
-    ctx.restore();
-    // reflet + petit voyant
-    ctx.fillStyle = 'rgba(255,255,255,.06)'; ctx.beginPath(); ctx.moveTo(72, 86); ctx.lineTo(150, 86); ctx.lineTo(96, 190); ctx.lineTo(72, 190); ctx.closePath(); ctx.fill();
-    A.circle(286, 200, 3, G && G.play ? '#ff4040' : '#552', 0);
-  }
-  // un chat vu de dos, pieds en (x, y)
-  function chatDos(L, x, y, s, c, t, l){
-    const saut = c ? c.saut : 0, joue = c ? c.joue : 0, rt = c ? c.rate : 0;
-    const bob = joue ? Math.abs(Math.sin(t * 14)) * 5 : 0, lift = saut * 12 + bob;
-    ctx.save(); ctx.translate(x, y - lift); ctx.scale(s, s);
-    const pt = L.point;
-    // queue qui remue
-    const q = Math.sin(t * (joue ? 10 : 2.5) + l) * 10;
-    ln([[0, -8], [30, -6], [40 + q * .3, -30 + q]], 13, COL.ink); ln([[0, -8], [30, -6], [40 + q * .3, -30 + q]], 7, L.mask ? pt : L.body);
-    // corps
-    ell(0, -34, 30, 36, L.body);
-    if (L.mask){ ctx.save(); ctx.beginPath(); ctx.ellipse(0, -34, 28.5, 34.5, 0, 0, Math.PI * 2); ctx.clip(); ell(0, -2, 26, 16, 'rgba(0,0,0,.08)', 0); ctx.restore(); }
-    // tête (penchée quand il rate)
-    const hy = -82, rot = rt > 0 ? Math.sin(rt * 30) * .25 : (joue ? Math.sin(t * 14) * .08 : 0);
-    ctx.save(); ctx.translate(0, hy); ctx.rotate(rot);
-    [[-1], [1]].forEach(([sx]) => { tri([[sx * 24, -4], [sx * 18, -36], [sx * 3, -20]], pt); tri([[sx * 20, -9], [sx * 17, -28], [sx * 9, -19]], L.mask ? '#c9a58e' : '#6f7884', 0); });
-    ell(0, 0, 26, 23, L.body);
-    if (L.mask){ ctx.save(); ctx.beginPath(); ctx.ellipse(0, 0, 24.5, 21.5, 0, 0, Math.PI * 2); ctx.clip(); ell(0, -24, 30, 12, pt, 0); ctx.restore(); }
-    ctx.restore();
-    // petites étoiles quand il réussit
-    if (saut > .3) for (let i = 0; i < 3; i++){ const a = -Math.PI / 2 + (i - 1) * .7; A.star(Math.cos(a) * 46, hy + Math.sin(a) * 46, 7 * saut, COL.yellow, 2); }
-    ctx.restore();
-  }
-  function chats(t){ for (let l = 0; l < 3; l++) chatDos(CHATS[l], laneX(l, 1), 708, l === 0 ? 1.05 : .98, G && G.chat[l], t, l); }
-
-  function draw(c){
-    ctx = c || A.ctx();
-    const t = G ? tps() : 0, T = G ? G.t : 0;
-    salon(); piste(t); notes(t); tele(t); chats(T);
-    if (!G) return;
-    if (G.mode === 'jeu' && G.notes.length) A.txt(Math.max(0, Math.round(G.pts / G.notes.length * 100)) + ' %', 20, 44, 26, COL.white, { align: 'left', lw: 6 });
-    if (G.mode === 'finRec'){
-      A.blob(40, 236, 280, 336, 26, 'rgba(255,255,255,.95)', 5);
-      A.txt(G.nRec + ' notes', 180, 285, 38, COL.violet, { lw: 0 });
-    }
-    (BTN[G.mode] || []).forEach(b => button('bb-' + b.id, b.x, b.y, b.w, b.h, b.label, { color: b.color }));
-    if (G.copie > 0) A.txt('Code copié !', 180, 600, 30, COL.yellow, { lw: 7 });
-  }
-
-  function vignette(c, x, y, w, h, t){
-    const old = ctx; ctx = c; const k = h / 230;
-    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-180, -230);
-    c.fillStyle = '#3a2a5e'; c.fillRect(-120, -20, 600, 260); c.fillStyle = '#b9814a'; c.fillRect(-120, 120, 600, 140);
-    A.blob(110, 20, 140, 84, 10, '#2b2838', 4); A.rr(118, 28, 124, 68, 6); c.fillStyle = '#0f1a3d'; c.fill();
-    [[150, 76, 0], [186, 56, 1], [222, 40, 2]].forEach(([xx, yy, l]) => { A.rr(xx - 16, yy - 4, 32 + Math.sin(t * 3 + l) * 6, 8, 4); c.fillStyle = LANE_C[l]; c.fill(); });
-    poly([[155, 104], [205, 104], [290, 210], [70, 210]], 'rgba(20,14,40,.8)');
-    const o = [Math.max(0, Math.sin(t * 5)), Math.max(0, Math.sin(t * 5 + 2)), Math.max(0, Math.sin(t * 5 + 4))];
-    for (let l = 0; l < 3; l++) chatDos(CHATS[l], 100 + l * 80, 232, .8, { saut: o[l] * .6, joue: 0, rate: 0 }, t, l);
-    c.restore(); ctx = old;
-  }
-
-  Bourdi.ajouter({
-    id: 'brokeband', titre: 'broke band', court: 'broke band',
-    consigne: 'Tape quand la note arrive sur la ligne. Note longue : garde le doigt appuyé !',
-    plusPetitGagne: false,
-    seuils: { S: 92, A: 82, B: 70, C: 55, D: 38 },
-    format: n => Math.max(0, Math.round(n)) + ' %',
-    musique: 'aucune', vignette,
-    start(){ ctx = A.ctx(); nouvellePartie(SAVE.test ? 'choix' : 'jeu'); },
-    update, draw, down, up, etat: () => G, NOTES, tps: () => G ? tps() : 0
   });
 })();
 
