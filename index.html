@@ -6132,6 +6132,308 @@ pseudoShow(scene === 'name');
 })();
 
 </script>
+<script>
+'use strict';
+// =====================================================================
+//  ÉPREUVE 22 — Lo Loéla   (EN TEST « À venir » depuis le 15 nov.)
+//  La montagne en coupe : en bas la gare et ses grosses pompes, en haut la
+//  ferme, le puits et le bassin des vaches. Sous terre, des tuyaux emmêlés.
+//  Tape sur un tuyau = il tourne d'un quart de tour. Quand le chemin va de
+//  la gare jusqu'au puits, l'eau monte (« Ça coule ! »), déborde du puits et
+//  remplit le bassin des vaches d'un tiers. 3 grilles (4×5, 5×6, 6×7) ; à la
+//  fin le bassin est plein et les vaches boivent.
+//  Pièges : tuyaux ROUILLÉS (ne tournent pas, il faut faire avec) et
+//  fausses pistes qui finissent contre un rocher.
+//  Grilles fixes (même graine pour tout le monde). Score = chrono (ms), le
+//  plus petit gagne ; le chrono s'arrête pendant que l'eau monte.
+//  Textes validés le 15 nov. : « Lo Loéla », consigne, « Grille 1/3 »,
+//  « Ça coule ! », « 23,45 s ».
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', green: '#7ad81e', sky: '#5ec8ff', blue: '#2f6bff' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const N = 1, E = 2, S = 4, O = 8;                  // ouvertures d'un tuyau (O = ouest)
+  const DIRS = [[N, 0, -1, S], [E, 1, 0, O], [S, 0, 1, N], [O, -1, 0, E]];
+  const rot = m => ((m << 1) | (m >> 3)) & 15;      // un quart de tour dans le sens des aiguilles
+  const EAU = '#3fb6ff', EAU2 = '#9fe3ff', TERRE = '#8a5a36', TERRE2 = '#734a2c';
+
+  // ---------- les 3 grilles (toujours les mêmes) ----------
+  const NIVEAUX = [
+    { cols: 4, rows: 5, src: 2, dst: 1, rouilles: 1, rochers: 1, graine: 11 },
+    { cols: 5, rows: 6, src: 3, dst: 1, rouilles: 2, rochers: 2, graine: 27 },
+    { cols: 6, rows: 7, src: 4, dst: 2, rouilles: 3, rochers: 3, graine: 53 }
+  ];
+  function hasard(seed){ let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  function melange(r, arr){ for (let i = arr.length - 1; i > 0; i--){ const j = Math.floor(r() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; } return arr; }
+  const tourne = (m, n) => { for (let i = 0; i < n; i++) m = rot(m); return m; };
+
+  function genere(L){
+    const r = hasard(L.graine), C = L.cols, R = L.rows;
+    // 1) un chemin au hasard de la gare (en bas) jusqu'au puits (en haut)
+    const minLen = C + R, maxLen = Math.floor(C * R * .6);
+    let chemin = null;
+    for (let essai = 0; essai < 400 && !chemin; essai++){
+      const vu = new Set(), p = [];
+      const dfs = (x, y) => {
+        p.push([x, y]); vu.add(x + ',' + y);
+        if (y === 0 && x === L.dst) return p.length >= minLen && p.length <= maxLen;
+        if (p.length > maxLen){ p.pop(); vu.delete(x + ',' + y); return false; }
+        for (const [, dx, dy] of melange(r, DIRS.slice())){
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= C || ny >= R || vu.has(nx + ',' + ny)) continue;
+          if (dfs(nx, ny)) return true;
+        }
+        p.pop(); vu.delete(x + ',' + y); return false;
+      };
+      if (dfs(L.src, R - 1)) chemin = p.slice();
+    }
+    const cases = []; for (let y = 0; y < R; y++){ cases.push([]); for (let x = 0; x < C; x++) cases[y].push(null); }
+    const surChemin = new Set(chemin.map(([x, y]) => x + ',' + y));
+    // 2) les tuyaux du chemin (droit ou virage, parfois un T pour embrouiller)
+    chemin.forEach(([x, y], i) => {
+      const lien = (a, b) => { for (const [d, dx, dy] of DIRS) if (a[0] + dx === b[0] && a[1] + dy === b[1]) return d; return 0; };
+      let m = (i === 0 ? S : lien([x, y], chemin[i - 1])) | (i === chemin.length - 1 ? N : lien([x, y], chemin[i + 1]));
+      if (r() < .22){ const libres = [N, E, S, O].filter(d => !(m & d)); m |= libres[Math.floor(r() * libres.length)]; }
+      cases[y][x] = { m, bon: m, rouille: false, roc: false };
+    });
+    // 3) le reste : fausses pistes, rochers
+    const autres = []; for (let y = 0; y < R; y++) for (let x = 0; x < C; x++) if (!surChemin.has(x + ',' + y)) autres.push([x, y]);
+    melange(r, autres);
+    const FORMES = [N | S, N | E, N | E, N | E | S, N | E];
+    autres.forEach(([x, y], i) => {
+      if (i < L.rochers) cases[y][x] = { m: 0, roc: true, rouille: false };
+      else cases[y][x] = { m: tourne(FORMES[Math.floor(r() * FORMES.length)], Math.floor(r() * 4)), roc: false, rouille: false };
+    });
+    // 4) les rouillés : la moitié sur le chemin (déjà dans le bon sens), le reste ailleurs (dans un mauvais sens)
+    const surC = melange(r, chemin.slice(1, -1)), horsC = autres.slice(L.rochers);
+    for (let i = 0; i < L.rouilles; i++){
+      const q = i % 2 === 0 ? surC[i] : horsC[i]; if (q) cases[q[1]][q[0]].rouille = true;
+    }
+    // 5) on emmêle tout ce qui n'est pas rouillé
+    for (let y = 0; y < R; y++) for (let x = 0; x < C; x++){ const c = cases[y][x]; if (!c.roc && !c.rouille) c.m = tourne(c.m, Math.floor(r() * 4)); c.ang = 0; c.cog = 0; }
+    const g = { L, cases, chemin };
+    while (relie(g)){ const [x, y] = chemin.find(([x, y]) => !cases[y][x].rouille); cases[y][x].m = rot(cases[y][x].m); }
+    return g;
+  }
+  // l'eau passe-t-elle de la gare au puits ? (renvoie la distance de chaque case remplie, ou null)
+  function inonde(g){
+    const { cases, L } = g, dist = {}, file = [];
+    const c0 = cases[L.rows - 1][L.src];
+    if (!(c0.m & S)) return { dist, ok: false };
+    dist[L.src + ',' + (L.rows - 1)] = 0; file.push([L.src, L.rows - 1]);
+    while (file.length){
+      const [x, y] = file.shift(), c = cases[y][x];
+      for (const [d, dx, dy, opp] of DIRS){
+        if (!(c.m & d)) continue;
+        const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= L.cols || ny >= L.rows) continue;
+        const n = cases[ny][nx]; if (n.roc || !(n.m & opp) || dist[nx + ',' + ny] != null) continue;
+        dist[nx + ',' + ny] = dist[x + ',' + y] + 1; file.push([nx, ny]);
+      }
+    }
+    const k = L.dst + ',0';
+    return { dist, ok: dist[k] != null && !!(cases[0][L.dst].m & N), fin: dist[k] };
+  }
+  const relie = g => inonde(g).ok;
+
+  // ---------- partie ----------
+  let G = null;
+  function geo(L){
+    const c = Math.min(300 / L.cols, 400 / L.rows), w = c * L.cols, h = c * L.rows;
+    return { c, x0: 180 - w / 2, y0: 178 + (420 - h) / 2, w, h };
+  }
+  function nouvellePartie(){ G = { t: 0, ms: 0, n: 0, phase: 'jeu', pt: 0, bassin: 0, bassinDe: 0, grille: genere(NIVEAUX[0]), fini: false }; G.geo = geo(NIVEAUX[0]); }
+  function grilleSuivante(){ G.n++; G.grille = genere(NIVEAUX[G.n]); G.geo = geo(NIVEAUX[G.n]); G.phase = 'jeu'; G.pt = 0; }
+
+  function update(dt){
+    if (!G) return;
+    G.t += dt; G.pt += dt;
+    const { cases } = G.grille;
+    cases.forEach(l => l.forEach(c => { c.ang *= Math.pow(.0005, dt); if (Math.abs(c.ang) < .01) c.ang = 0; c.cog = Math.max(0, c.cog - dt * 3); }));
+    if (G.phase === 'jeu'){ G.ms += dt * 1000; return; }
+    if (G.phase === 'eau'){
+      // l'eau monte case par case, puis le puits déborde dans le bassin
+      const tMontee = (G.inonde.fin + 2) / 11;
+      if (G.pt > tMontee && G.bassin < (G.n + 1) / 3){
+        if (!G.deborde){ G.deborde = true; A.bruit(0, .9, .14, 'lowpass', 900, 1); }
+        G.bassin = Math.min((G.n + 1) / 3, G.bassin + dt / 2.4);
+      }
+      if (G.pt > tMontee + 1.4){
+        if (G.n < NIVEAUX.length - 1){ grilleSuivante(); A.sons.go(); }
+        else { G.phase = 'boit'; G.pt = 0; }
+      }
+      return;
+    }
+    if (G.phase === 'boit' && !G.fini && G.pt > 1.8){ G.fini = true; A.fin({ score: Math.round(G.ms) }); }
+  }
+
+  function caseAt(p){
+    const { c, x0, y0 } = G.geo, L = G.grille.L;
+    const x = Math.floor((p.x - x0) / c), y = Math.floor((p.y - y0) / c);
+    return x >= 0 && y >= 0 && x < L.cols && y < L.rows ? G.grille.cases[y][x] : null;
+  }
+  function down(p){
+    if (!G || G.phase !== 'jeu') return;
+    const k = caseAt(p); if (!k || k.roc) return;
+    if (k.rouille){ k.cog = 1; A.tone(0, 120, .08, .12, 'square', 90); return; }
+    k.m = rot(k.m); k.ang -= Math.PI / 2;
+    A.tone(0, 420 + Math.random() * 60, .05, .06, 'square', 300);
+    const I = inonde(G.grille);
+    if (I.ok){ G.phase = 'eau'; G.pt = 0; G.inonde = I; G.deborde = false; A.bruit(0, .6, .12, 'bandpass', 300, 1, 120); A.sons.bien(); }
+  }
+
+  // ---------- dessin ----------
+  function ln(pts, w, c){ ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.lineWidth = w; ctx.strokeStyle = c; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke(); }
+  function ell(x, y, rx, ry, fill, lw = 3, rot = 0){ ctx.beginPath(); ctx.ellipse(x, y, Math.max(.5, rx), Math.max(.5, ry), rot, 0, Math.PI * 2); if (fill){ ctx.fillStyle = fill; ctx.fill(); } if (lw){ ctx.lineWidth = lw; ctx.strokeStyle = COL.ink; ctx.stroke(); } }
+  function poly(pts, fill, lw = 0){ ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); if (lw){ ctx.lineWidth = lw; ctx.strokeStyle = COL.ink; ctx.lineJoin = 'round'; ctx.stroke(); } }
+
+  const SOL = 150;    // le haut de la montagne (la ferme)
+  function decor(t){
+    // ciel + montagnes au loin
+    ctx.fillStyle = '#8fd6ff'; ctx.fillRect(-60, -60, 480, 300);
+    poly([[-60, 140], [40, 70], [120, 120], [230, 50], [330, 110], [420, 80], [420, 200], [-60, 200]], '#b9c8e8');
+    poly([[260, 62], [230, 50], [204, 66], [222, 64], [232, 72]], '#fff');
+    // la montagne en coupe
+    ctx.fillStyle = TERRE; ctx.fillRect(-60, SOL, 480, 640);
+    ctx.fillStyle = TERRE2; for (let y = SOL + 60; y < 640; y += 70){ ctx.beginPath(); ctx.moveTo(-60, y); for (let x = -60; x <= 420; x += 40) ctx.lineTo(x, y + Math.sin(x * .05 + y) * 8); ctx.lineTo(420, y + 22); ctx.lineTo(-60, y + 22); ctx.closePath(); ctx.fill(); }
+    [[30, 210], [330, 260], [20, 420], [340, 470], [40, 560], [320, 590], [180, 172]].forEach(([x, y], i) => ell(x, y, 9 + i % 3 * 3, 6 + i % 2 * 3, '#a8916f', 2.5));
+    // herbe du sommet
+    ctx.fillStyle = '#5cbf3a'; ctx.fillRect(-60, SOL - 8, 480, 14); ln([[-60, SOL + 6], [420, SOL + 6]], 3, '#3f8f25');
+  }
+  function ferme(){
+    // petite maison
+    A.blob(14, SOL - 54, 66, 48, 4, '#f3e3c2', 3);
+    poly([[6, SOL - 50], [47, SOL - 84], [88, SOL - 50]], '#c8453a', 3);
+    A.blob(38, SOL - 34, 18, 28, 3, '#8a5a36', 3);
+    A.blob(20, SOL - 44, 12, 12, 2, '#9fe3ff', 2.5); A.blob(62, SOL - 44, 12, 12, 2, '#9fe3ff', 2.5);
+  }
+  function puits(x){
+    A.blob(x - 22, SOL - 34, 44, 30, 6, '#b8b2a8', 3.5);
+    for (let i = 0; i < 3; i++) ln([[x - 22, SOL - 24 + i * 9], [x + 22, SOL - 24 + i * 9]], 1.5, 'rgba(0,0,0,.25)');
+    ln([[x - 18, SOL - 34], [x - 18, SOL - 66]], 4, COL.ink); ln([[x + 18, SOL - 34], [x + 18, SOL - 66]], 4, COL.ink);
+    poly([[x - 28, SOL - 62], [x, SOL - 80], [x + 28, SOL - 62]], '#c8453a', 3);
+    ln([[x - 18, SOL - 52], [x + 18, SOL - 52]], 3, '#6b4a2a'); ln([[x, SOL - 52], [x, SOL - 42]], 2, COL.ink);
+  }
+  function bassin(x0, x1, niv, t){
+    A.blob(x0, SOL - 30, x1 - x0, 26, 5, '#9a9488', 3.5);
+    if (niv > 0){ const h = 18 * niv; A.rr(x0 + 5, SOL - 9 - h, x1 - x0 - 10, h, 3); ctx.fillStyle = EAU; ctx.fill(); ln([[x0 + 8, SOL - 9 - h + 2], [x1 - 8, SOL - 9 - h + 2]], 2, EAU2); }
+  }
+  function vache(x, y, d, s, t, boit){
+    ctx.save(); ctx.translate(x, y); ctx.scale(d * s, s);
+    [[-30], [-14], [22], [36]].forEach(([a]) => A.blob(a - 5, -8, 10, 34, 3, '#fff', 3));
+    ell(0, -28, 52, 28, '#fff', 4);
+    ell(-18, -34, 12, 9, COL.ink, 0); ell(16, -20, 10, 8, COL.ink, 0); ell(26, -40, 7, 6, COL.ink, 0);
+    ln([[-50, -34], [-60, -8 + Math.sin(t * 3) * 6]], 4, COL.ink);
+    const hy = boit ? -14 + Math.sin(t * 8) * 3 : -48 + Math.sin(t * 2) * 2, hx = boit ? 62 : 56;
+    ell(hx, hy, 20, 18, '#fff', 4); ell(hx + 10, hy + 10, 14, 10, '#ffb3c6', 3);
+    A.circle(hx + 6, hy + 10, 2, COL.ink, 0); A.circle(hx + 14, hy + 10, 2, COL.ink, 0);
+    A.circle(hx - 4, hy - 4, 3, COL.ink, 0);
+    ell(hx - 12, hy - 16, 8, 4, '#fff', 3, -.6); ln([[hx, hy - 18], [hx + 4, hy - 30]], 4, '#e8d2a8');
+    ctx.restore();
+  }
+  function gare(t){
+    const y = 612;
+    ctx.fillStyle = '#5a3a24'; ctx.fillRect(-60, y - 4, 480, 140);
+    A.blob(-10, y + 6, 380, 120, 10, '#e9d7b4', 4);
+    poly([[-20, y + 10], [180, y - 24], [380, y + 10]], '#c8453a', 4);
+    for (let i = 0; i < 4; i++) A.blob(12 + i * 90, y + 40, 40, 46, 6, '#9fe3ff', 3);
+    // les rails
+    ln([[-60, 712], [420, 712]], 5, '#6b6b78'); for (let x = -50; x < 420; x += 28) ln([[x, 706], [x + 10, 718]], 4, '#6b4a2a');
+  }
+  function pompes(x, t, marche){
+    const vib = marche ? Math.sin(t * 60) * 1.5 : 0;
+    [x - 30, x + 30].forEach((px, i) => {
+      A.blob(px - 17 + vib, 616, 34, 62, 10, '#2f6bff', 4);
+      A.rr(px - 12 + vib, 622, 24, 8, 3); ctx.fillStyle = 'rgba(255,255,255,.4)'; ctx.fill();
+      A.circle(px + vib, 652, 9, '#fff', 3); ln([[px + vib, 652], [px + vib + Math.cos(t * (marche ? 9 : 1) + i) * 6, 652 + Math.sin(t * (marche ? 9 : 1) + i) * 6]], 2, COL.red);
+    });
+    A.blob(x - 12, 600, 24, 22, 4, '#7f8a9a', 3);
+  }
+  // un tuyau : ouvertures m, centre (cx, cy), taille c
+  function tuyau(m, cx, cy, c, couleur, eau, ang){
+    ctx.save(); ctx.translate(cx, cy); ctx.rotate(ang || 0);
+    const r = c / 2, w = c * .34;
+    const bras = []; if (m & N) bras.push([0, -r]); if (m & E) bras.push([r, 0]); if (m & S) bras.push([0, r]); if (m & O) bras.push([-r, 0]);
+    bras.forEach(([x, y]) => ln([[0, 0], [x, y]], w + 6, COL.ink));
+    A.circle(0, 0, w / 2 + 3, COL.ink, 0);
+    bras.forEach(([x, y]) => ln([[0, 0], [x, y]], w, couleur));
+    A.circle(0, 0, w / 2, couleur, 0);
+    if (eau){ bras.forEach(([x, y]) => ln([[0, 0], [x, y]], w * .5, EAU)); A.circle(0, 0, w * .25, EAU, 0); }
+    else bras.forEach(([x, y]) => ln([[x * .1, y * .1 - w * .12], [x * .8, y * .8 - w * .12]], w * .18, 'rgba(255,255,255,.4)'));
+    ctx.restore();
+  }
+  function grille(t){
+    const { c, x0, y0, w, h } = G.geo, g = G.grille, L = g.L;
+    const dist = G.phase !== 'jeu' && G.inonde ? G.inonde.dist : null, front = G.pt * 11;
+    // tuyau de la gare jusqu'à la grille, et de la grille jusqu'au puits
+    const sx = x0 + (L.src + .5) * c, dx = x0 + (L.dst + .5) * c;
+    ln([[sx, 604], [sx, y0 + h]], c * .34 + 6, COL.ink); ln([[sx, 604], [sx, y0 + h]], c * .34, '#9aa3b2');
+    if (dist) ln([[sx, 604], [sx, y0 + h]], c * .17, EAU);
+    ln([[dx, SOL - 6], [dx, y0]], c * .34 + 6, COL.ink); ln([[dx, SOL - 6], [dx, y0]], c * .34, '#9aa3b2');
+    if (dist && front > G.inonde.fin + 1) ln([[dx, SOL - 6], [dx, y0]], c * .17, EAU);
+    // le fond de la grille
+    A.rr(x0 - 6, y0 - 6, w + 12, h + 12, 10); ctx.fillStyle = 'rgba(40,24,12,.35)'; ctx.fill();
+    for (let y = 0; y < L.rows; y++) for (let x = 0; x < L.cols; x++){
+      const k = g.cases[y][x], cx = x0 + (x + .5) * c, cy = y0 + (y + .5) * c;
+      A.rr(x0 + x * c + 2, y0 + y * c + 2, c - 4, c - 4, 6); ctx.fillStyle = (x + y) % 2 ? 'rgba(0,0,0,.08)' : 'rgba(255,255,255,.04)'; ctx.fill();
+      if (k.roc){ ell(cx, cy + 2, c * .36, c * .3, '#9b9488', 3); ell(cx - c * .1, cy - c * .06, c * .12, c * .07, 'rgba(255,255,255,.3)', 0); continue; }
+      const d = dist && dist[x + ',' + y], plein = d != null && d <= front;
+      const sh = k.cog > 0 ? Math.sin(k.cog * 40) * 3 * k.cog : 0;
+      tuyau(k.m, cx + sh, cy, c, k.rouille ? '#b0623a' : '#c9d0dc', plein, k.ang);
+      if (k.rouille){ // taches de rouille + boulons
+        ell(cx + sh - c * .12, cy + c * .1, c * .06, c * .04, '#7a3a1e', 0); ell(cx + sh + c * .1, cy - c * .12, c * .05, c * .03, '#7a3a1e', 0);
+        [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([a, b]) => A.circle(cx + sh + a * c * .32, cy + b * c * .32, c * .045, '#6b6b78', 1.5));
+      }
+    }
+  }
+
+  function draw(cx){
+    ctx = cx || A.ctx();
+    if (!G) return;
+    const t = G.t, L = G.grille.L, dx = G.geo.x0 + (L.dst + .5) * G.geo.c;
+    decor(t); ferme(); gare(t);
+    const sx = G.geo.x0 + (L.src + .5) * G.geo.c;
+    grille(t); pompes(sx, t, G.phase === 'eau');
+    puits(dx);
+    // l'eau qui déborde du puits vers le bassin
+    const bx0 = dx + 34, bx1 = dx + 120;
+    if (G.phase === 'eau' && G.deborde && G.bassin < (G.n + 1) / 3 + .01) ln([[dx + 20, SOL - 32], [dx + 30, SOL - 40], [bx0 + 10, SOL - 26]], 5, EAU);
+    bassin(bx0, bx1, G.bassin, t);
+    const boit = G.phase === 'boit';
+    vache(bx1 + 70, SOL + 4, -1, .4, t + 1.3, boit);
+    vache(bx1 + 36, SOL - 2, -1, .46, t, boit);
+    // textes
+    A.txt((G.ms / 1000).toFixed(2).replace('.', ',') + ' s', 20, 44, 24, COL.white, { align: 'left', lw: 6 });
+    A.txt('Grille ' + (G.n + 1) + '/3', 196, 44, 24, COL.yellow, { lw: 7 });
+    if (G.phase === 'eau' && G.pt < 1.6){ const k = Math.min(1, G.pt * 5); ctx.save(); ctx.translate(180, 390); ctx.scale(.6 + k * .4, .6 + k * .4); A.txt('Ça coule !', 0, 0, 46, EAU2, { lw: 10 }); ctx.restore(); }
+  }
+
+  function vignette(c, x, y, w, h, t){
+    const old = ctx; ctx = c; const k = h / 230;
+    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-150, -230);
+    c.fillStyle = '#8fd6ff'; c.fillRect(-150, -20, 600, 120); c.fillStyle = TERRE; c.fillRect(-150, 70, 600, 200);
+    c.fillStyle = '#5cbf3a'; c.fillRect(-150, 62, 600, 12);
+    const m = [[N | S, N | E, O | S], [E | S, N | O, N | S], [N | E, O | E, N | O]];
+    const tour = Math.floor(t / .8) % 4;
+    m.forEach((l, yy) => l.forEach((v, xx) => tuyau(xx === 1 && yy === 1 ? tourne(v, tour) : v, 110 + xx * 44, 100 + yy * 44, 44, '#c9d0dc', yy * 3 + xx < (t * 3) % 10, 0)));
+    c.save(); c.translate(0, -88); puits(132); c.restore();
+    vache(250, 64, -1, .55, t, false);
+    c.restore(); ctx = old;
+  }
+
+  Bourdi.ajouter({
+    id: 'loloela', titre: 'Lo Loéla', court: 'Lo Loéla',
+    consigne: "Tape sur les tuyaux pour les tourner. Fais monter l'eau de la gare jusqu'au puits, le plus vite possible !",
+    bientot: true,                 // nouvelle épreuve : seulement en mode TEST, « À venir » pour les autres
+    plusPetitGagne: true,
+    seuils: { S: 25000, A: 35000, B: 50000, C: 70000, D: 100000 },    // à régler après ses essais
+    format: ms => (Math.max(0, ms) / 1000).toFixed(2).replace('.', ',') + ' s',
+    musique: 'jeu', vignette,
+    start(){ ctx = A.ctx(); nouvellePartie(); },
+    update, draw, down, etat: () => G, NIVEAUX, genere, inonde
+  });
+})();
+
+</script>
 <!-- FIN -->
 <script>Bourdi.demarrer();</script>
 
