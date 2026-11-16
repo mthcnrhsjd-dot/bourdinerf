@@ -6433,6 +6433,292 @@ pseudoShow(scene === 'name');
 })();
 
 </script>
+<script>
+'use strict';
+// =====================================================================
+//  ÉPREUVE 23 — bourdi'hood   (EN TEST « À venir » depuis le 16 nov.)
+//  Tir à l'arc dans la ferme, vu par les yeux du tireur (on voit l'arc et
+//  le bras). Au fond, une botte de foin ronde avec une cible dessus.
+//  Geste : doigt posé, tirer vers le bas = bander l'arc ; une fois l'arc
+//  bandé à fond, le doigt bouge le tir ; lever le doigt = la flèche part.
+//  - Pas bandé à fond → la flèche part moins fort et tombe plus bas.
+//  - Garder la corde tendue trop longtemps → l'arc tremble de plus en plus.
+//  3 manches × 3 flèches, la cible s'éloigne un tout petit peu à chaque manche :
+//   1) Arc long vert : pas de viseur, on vise avec la pointe de la flèche,
+//      la flèche retombe un peu (il faut viser un peu plus haut).
+//   2) Arc à poulies bleu : viseur 3 points (vert, jaune, rouge) + visette ;
+//      le BON point est le JAUNE (on ne le dit pas). La botte bouge un peu.
+//   3) Oneida (arc à poulies internes) : même viseur, la botte roule
+//      beaucoup de gauche à droite.
+//  Score : 10 au centre … 1 au bord, 0 hors cible. Max 90.
+//  Textes validés le 16 nov. : « bourdi'hood », consigne, « Manche 1/3 – Arc long »,
+//  « Manche 2/3 – Arc à poulies », « Manche 3/3 – Oneida », « Flèche 1/3 »,
+//  « 10 ! » / « 7 », « Raté ! », « 72 pts ». Rangs S 80 A 70 B 55 C 40 D 25.
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#e8742a', yellow: '#ffd21f', green: '#4caf2a', blue: '#2f6bff', sky: '#8fd6ff' };
+  const A = Bourdi.api; let ctx = A.ctx();
+
+  const MANCHES = [
+    { nom: 'Manche 1/3 – Arc long',     arc: 'long',     R: 70, bouge: 0,   vit: 0,   tremble: 5,   chute: 28, disp: 3 },
+    { nom: 'Manche 2/3 – Arc à poulies', arc: 'poulies',  R: 64, bouge: 28,  vit: .9,  tremble: 3.5, chute: 0,  disp: 1.5 },
+    { nom: 'Manche 3/3 – Oneida',        arc: 'oneida',   R: 58, bouge: 115, vit: 1.25, tremble: 3,  chute: 0,  disp: 1.5 }
+  ];
+  const CY = 300;                 // hauteur du centre de la cible
+  const TIRE = 150;               // px à tirer vers le bas pour bander à fond
+  const PIN = 20;                 // écart entre les points du viseur
+  const VISEUR_DY = 78;           // viseur au-dessus de la pointe de la flèche (arcs à poulies)
+  const ANNEAUX = [null, '#fff', '#fff', '#2b2b33', '#2b2b33', '#2f8cff', '#2f8cff', '#ff3b3b', '#ff3b3b', '#ffd21f', '#ffd21f'];
+
+  let G = null;
+  function nouvellePartie(){
+    G = { t: 0, m: 0, f: 0, total: 0, phase: 'annonce', pt: 0, bx: 180, ang: 0, tb: 0,
+      vise: null, vol: null, fleches: [], finT: 0 };
+    resetVise();
+  }
+  function resetVise(){
+    G.vise = { id: null, p0: null, p1: null, a0: null, a1: null, ax: 180, ay: 410, draw: 0, plein: false, hold: 0 };
+  }
+  const M = () => MANCHES[G.m];
+  // tremblement : léger au début, de plus en plus fort si on garde la corde tendue
+  function tremble(){
+    const v = G.vise, amp = M().tremble + Math.min(45, Math.max(0, v.hold - 2.5) * 10), t = G.t;
+    return [amp * (Math.sin(t * 1.7) * .6 + Math.sin(t * 2.9 + 1) * .4), amp * (Math.sin(t * 2.1 + 2) * .6 + Math.sin(t * 3.4) * .4)];
+  }
+  // la pointe de la flèche (arc long) ou le point jaune du viseur (arcs à poulies), avec le tremblement
+  function visee(){ const v = G.vise, [sx, sy] = v.plein ? tremble() : [0, 0]; return [v.ax + sx, v.ay + sy]; }
+
+  function update(dt){
+    if (!G) return;
+    G.t += dt; G.pt += dt;
+    const m = M();
+    // la botte de foin : immobile, un peu, puis beaucoup
+    G.tb += dt * m.vit;
+    const nx = 180 + Math.sin(G.tb) * m.bouge; G.ang += (nx - G.bx) / (m.R * 1.32); G.bx = nx;
+    if (G.phase === 'annonce' && G.pt > 1.4){ G.phase = 'vise'; G.pt = 0; }
+    if (G.phase === 'vise' && G.vise.plein) G.vise.hold += dt;
+    if (G.phase === 'vol' && G.pt > .3) touche();
+    if (G.phase === 'touche' && G.pt > 1){
+      G.f++;
+      if (G.f >= 3){
+        G.f = 0; G.m++;
+        if (G.m >= 3){ G.m = 2; G.phase = 'fin'; G.pt = 0; return; }
+        G.fleches = []; G.phase = 'annonce';
+      } else G.phase = 'vise';
+      G.pt = 0; resetVise();
+    }
+    if (G.phase === 'fin' && G.pt > .9 && !G.finT){ G.finT = 1; A.fin({ score: G.total }); }
+  }
+
+  function tire(){
+    const v = G.vise, m = M(), [x, y] = visee();
+    const faible = (1 - v.draw) * 170;                // pas bandé à fond : la flèche tombe plus bas
+    const ix = x + (Math.random() - .5) * 2 * m.disp, iy = y + m.chute + faible + (Math.random() - .5) * 2 * m.disp;
+    const pointe = m.arc === 'long' ? [x, y] : [x, y + VISEUR_DY];
+    G.vol = { x0: pointe[0] + 18, y0: pointe[1] + 160, x1: ix, y1: iy };
+    G.phase = 'vol'; G.pt = 0;
+    A.bruit(0, .18, .25, 'bandpass', 900, 1.2, 2600);
+    A.tone(0, 120, .12, .15, 'triangle', 70);
+  }
+  function touche(){
+    const m = M(), w = G.vol, dx = w.x1 - G.bx, dy = w.y1 - CY, d = Math.hypot(dx, dy), RB = m.R * 1.32;
+    let pts = 0;
+    if (d < m.R) pts = Math.min(10, 10 - Math.floor(d / (m.R / 10)));
+    if (d < RB){
+      const c = Math.cos(-G.ang), s = Math.sin(-G.ang);
+      G.fleches.push({ lx: dx * c - dy * s, ly: dx * s + dy * c });
+      A.tone(0, 90, .1, .25, 'sine', 50); A.bruit(0, .08, .2, 'lowpass', 600, 1);
+      A.particules(w.x1, w.y1, 8, { colors: ['#e8c25a', '#c99a3a'], speed: 120, size: 5, life: .5 });
+    } else {
+      A.particules(w.x1, Math.max(w.y1, 270), 10, { colors: ['#9b7a4a', '#6fcf4a'], speed: 90, size: 5, life: .5 });
+    }
+    G.total += pts;
+    if (pts === 10){ A.texte('10 !', w.x1, w.y1 - 30, { size: 46, color: COL.yellow, dur: 1 }); A.sons.bien(); A.secousse(4, .15); }
+    else if (pts > 0) A.texte(String(pts), w.x1, w.y1 - 30, { size: 40, color: COL.white, dur: 1 });
+    else { A.texte('Raté !', w.x1, Math.max(120, w.y1 - 30), { size: 40, color: COL.red, dur: 1 }); A.sons.erreur(); }
+    G.phase = 'touche'; G.pt = 0;
+  }
+
+  // ---------- le doigt ----------
+  function down(p, id){
+    if (!G || G.phase !== 'vise' || G.vise.id != null) return;
+    const v = G.vise; v.id = id; v.p0 = { x: p.x, y: p.y }; v.a0 = { x: v.ax, y: v.ay };
+  }
+  function move(p, id){
+    if (!G || G.phase !== 'vise') return;
+    const v = G.vise; if (v.id == null || id !== v.id) return;
+    if (!v.plein){
+      const d = Math.max(0, Math.min(1, (p.y - v.p0.y) / TIRE));
+      if (Math.floor(d * 6) > Math.floor(v.draw * 6)) A.tone(0, 300 + d * 500, .03, .03, 'square');
+      v.draw = Math.max(v.draw, d);
+      v.ax = v.a0.x + (p.x - v.p0.x);
+      if (v.draw >= 1){ v.plein = true; v.hold = 0; v.p1 = { x: p.x, y: p.y }; v.a1 = { x: v.ax, y: v.ay }; A.tone(0, 900, .05, .05, 'square'); }
+    } else {
+      v.ax = v.a1.x + (p.x - v.p1.x); v.ay = v.a1.y + (p.y - v.p1.y);
+    }
+    v.ax = Math.max(10, Math.min(350, v.ax)); v.ay = Math.max(90, Math.min(560, v.ay));
+  }
+  function up(p, id){
+    if (!G || G.phase !== 'vise') return;
+    const v = G.vise; if (v.id == null) return;
+    if (id === 'all'){ resetVise(); return; }                 // pause : on relâche sans tirer
+    if (id !== v.id) return;
+    if (v.draw < .15){ resetVise(); return; }                // juste un toucher : pas de tir
+    tire();
+  }
+
+  // ---------- dessin ----------
+  function ln(pts, w, c){ ctx.beginPath(); pts.forEach(([a, b], i) => i ? ctx.lineTo(a, b) : ctx.moveTo(a, b)); ctx.lineWidth = w; ctx.strokeStyle = c; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke(); }
+  function ell(x, y, rx, ry, fill, lw, r){ ctx.beginPath(); ctx.ellipse(x, y, rx, ry, r || 0, 0, Math.PI * 2); if (fill){ ctx.fillStyle = fill; ctx.fill(); } if (lw){ ctx.lineWidth = lw; ctx.strokeStyle = COL.ink; ctx.stroke(); } }
+  function poly(pts, fill, lw){ ctx.beginPath(); pts.forEach(([a, b], i) => i ? ctx.lineTo(a, b) : ctx.moveTo(a, b)); ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); if (lw){ ctx.lineWidth = lw; ctx.strokeStyle = COL.ink; ctx.lineJoin = 'round'; ctx.stroke(); } }
+
+  function decor(){
+    const g = ctx.createLinearGradient(0, 0, 0, 260); g.addColorStop(0, '#6cc4ff'); g.addColorStop(1, '#cdefff');
+    ctx.fillStyle = g; ctx.fillRect(-40, -40, 440, 310);
+    ell(70, 80, 34, 14, 'rgba(255,255,255,.85)', 0); ell(98, 72, 24, 14, 'rgba(255,255,255,.85)', 0);
+    ell(270, 110, 30, 11, 'rgba(255,255,255,.8)', 0);
+    // collines
+    ell(60, 262, 160, 40, '#8ccf6a', 0); ell(300, 266, 170, 44, '#7cc45c', 0);
+    // la grange à gauche
+    poly([[-20, 262], [-20, 170], [36, 132], [92, 170], [92, 262]], '#c8453a', 3.5);
+    poly([[-26, 172], [36, 126], [98, 172], [92, 178], [36, 136], [-20, 178]], '#7a2a24', 3);
+    A.blob(18, 200, 36, 62, 3, '#e9d7b4', 3); ln([[18, 200], [54, 262]], 3, '#c8453a'); ln([[54, 200], [18, 262]], 3, '#c8453a');
+    // petites bottes carrées à droite
+    A.blob(292, 236, 40, 24, 4, '#e8c25a', 3); A.blob(318, 220, 36, 22, 4, '#e8c25a', 3);
+    // la barrière
+    for (let x = 100; x < 290; x += 26) A.blob(x, 236, 7, 28, 2, '#a8784a', 2.5);
+    ln([[98, 244], [290, 244]], 4, '#a8784a'); ln([[98, 256], [290, 256]], 4, '#a8784a');
+    // l'herbe
+    const h = ctx.createLinearGradient(0, 262, 0, 720); h.addColorStop(0, '#79d24e'); h.addColorStop(1, '#4fae34');
+    ctx.fillStyle = h; ctx.fillRect(-40, 262, 440, 500);
+    ln([[-40, 263], [400, 263]], 3, '#3f8f2a');
+    for (let i = 0; i < 9; i++){ const y = 300 + i * i * 6; ln([[-40, y], [400, y]], 1.5, 'rgba(0,0,0,.05)'); }
+  }
+  function cible(x, y, R, a){
+    const RB = R * 1.32;
+    ell(x, y + RB - 4, RB * .9, 10, 'rgba(0,0,0,.2)', 0);
+    A.circle(x, y, RB, '#e8c25a', 4);
+    ctx.save(); ctx.translate(x, y); ctx.rotate(a);
+    for (let i = 0; i < 14; i++){ const b = i / 14 * Math.PI * 2; ln([[Math.cos(b) * R * 1.04, Math.sin(b) * R * 1.04], [Math.cos(b + .25) * RB * .95, Math.sin(b + .25) * RB * .95]], 2.5, '#c99a3a'); }
+    ctx.restore();
+    for (let s = 1; s <= 10; s++){
+      ctx.beginPath(); ctx.arc(x, y, R * (11 - s) / 10, 0, Math.PI * 2); ctx.fillStyle = ANNEAUX[s]; ctx.fill();
+      ctx.lineWidth = s === 1 ? 3 : 1; ctx.strokeStyle = s === 3 || s === 4 ? '#666' : COL.ink; ctx.stroke();
+    }
+    ln([[x - 2, y], [x + 2, y]], 1.5, COL.ink);
+    // les flèches plantées (vues de derrière)
+    G && G.fleches.forEach(f => {
+      const c = Math.cos(a), s = Math.sin(a), fx = x + f.lx * c - f.ly * s, fy = y + f.lx * s + f.ly * c;
+      ln([[fx, fy], [fx + 3, fy + 9]], 3, '#5a3a24');
+      ln([[fx + 3, fy + 9 - 5], [fx + 3, fy + 9 + 5]], 3, COL.orange); ln([[fx - 2, fy + 9], [fx + 8, fy + 9]], 3, COL.orange);
+      A.circle(fx + 3, fy + 9, 2.2, COL.yellow, 1);
+    });
+  }
+
+  // l'arc vu par le tireur : la main gauche tient la poignée, la corde part vers le visage (en bas à droite)
+  function arc(type, px, py, draw, t){
+    // px, py = pointe de la flèche
+    const gx = px - 30, gy = py + 30;                // la poignée (à gauche de la flèche, pour voir la cible)
+    const haut = [gx - 26 + draw * 10, gy - 300 + draw * 22], bas = [gx - 26 + draw * 10, gy + 300 - draw * 22];
+    const nock = [px + 4 + draw * 40, gy + 10 + draw * 330];
+    const coul = type === 'long' ? '#3f9a2a' : type === 'poulies' ? '#2f6bff' : '#2b2b33';
+    // la corde
+    ln([haut, nock, bas], 2.5, '#f2f2f2'); ln([haut, nock, bas], 1, 'rgba(0,0,0,.35)');
+    // les branches
+    if (type === 'poulies'){
+      ln([[gx, gy - 70], [gx - 6, gy - 180], haut], 14, COL.ink); ln([[gx, gy - 70], [gx - 6, gy - 180], haut], 9, coul);
+      ln([[gx, gy + 70], [gx - 6, gy + 180], bas], 14, COL.ink); ln([[gx, gy + 70], [gx - 6, gy + 180], bas], 9, coul);
+      A.circle(haut[0], haut[1], 13, '#c9d0dc', 3.5); A.circle(haut[0], haut[1], 4, COL.ink, 0);
+      A.circle(bas[0], bas[1], 13, '#c9d0dc', 3.5); A.circle(bas[0], bas[1], 4, COL.ink, 0);
+      A.blob(gx - 10, gy - 90, 20, 180, 7, '#1f4fd8', 3.5);
+    } else {
+      const k = type === 'long' ? 12 : 11;
+      ctx.beginPath(); ctx.moveTo(haut[0], haut[1]); ctx.quadraticCurveTo(gx - 6, gy - 150, gx, gy); ctx.quadraticCurveTo(gx - 6, gy + 150, bas[0], bas[1]);
+      ctx.lineCap = 'round'; ctx.lineWidth = k + 5; ctx.strokeStyle = COL.ink; ctx.stroke(); ctx.lineWidth = k; ctx.strokeStyle = coul; ctx.stroke();
+      if (type === 'oneida'){            // les poulies cachées dans les branches
+        [[-1], [1]].forEach(([d]) => { const yy = gy + d * 205, xx = gx - 14; A.circle(xx, yy, 9, '#555', 3); A.circle(xx, yy, 3, COL.orange, 0); });
+        A.blob(gx - 9, gy - 60, 18, 120, 6, '#3a3a44', 3.5); ln([[gx, gy - 56], [gx, gy + 56]], 3, COL.orange);
+      } else A.blob(gx - 8, gy - 30, 16, 60, 6, '#7a4a28', 3);
+    }
+    // la flèche
+    if (draw > 0) {
+      ln([nock, [px, py]], 6, COL.ink); ln([nock, [px, py]], 3.5, '#c99a5a');
+      poly([[px, py - 8], [px - 5, py + 6], [px + 5, py + 6]], '#9aa3b2', 2.5);
+      const fx = nock[0] - (nock[0] - px) * .06, fy = nock[1] - (nock[1] - py) * .06;
+      poly([[fx, fy], [fx - 12, fy + 26], [fx - 3, fy + 22]], COL.orange, 2); poly([[fx, fy], [fx + 12, fy + 26], [fx + 3, fy + 22]], COL.orange, 2);
+    }
+    // le bras gauche et la main
+    ln([[-40, 760], [gx - 14, gy + 26]], 44, COL.ink); ln([[-40, 760], [gx - 14, gy + 26]], 36, '#4f6fae');
+    ln([[gx - 40, gy + 70], [gx - 10, gy + 22]], 26, COL.ink); ln([[gx - 40, gy + 70], [gx - 10, gy + 22]], 19, '#f1c39a');
+    A.blob(gx - 16, gy - 4, 26, 36, 11, '#f1c39a', 3.5);
+  }
+  // viseur à 3 points (arcs à poulies) : centré sur le point jaune
+  function viseur(x, y){
+    ln([[x - 24, y + 18], [x - 34, y + 60]], 8, COL.ink); ln([[x - 24, y + 18], [x - 34, y + 60]], 4, '#555');
+    ctx.beginPath(); ctx.arc(x, y, 30, 0, Math.PI * 2); ctx.lineWidth = 9; ctx.strokeStyle = COL.ink; ctx.stroke(); ctx.lineWidth = 5; ctx.strokeStyle = '#3a3a44'; ctx.stroke();
+    [[-PIN, '#3fd23f'], [0, COL.yellow], [PIN, COL.red]].forEach(([d, c]) => {
+      ln([[x - 28, y + d], [x - 3, y + d]], 3, '#222'); A.circle(x, y + d, 3.6, c, 1.5);
+    });
+  }
+  // la visette : on regarde à travers un petit trou, le reste est sombre
+  function visette(x, y, k){
+    ctx.save(); ctx.beginPath(); ctx.rect(-40, -40, 440, 800); ctx.arc(x, y, 96, 0, Math.PI * 2, true);
+    ctx.fillStyle = `rgba(20,14,30,${.55 * k})`; ctx.fill(); ctx.restore();
+    ctx.beginPath(); ctx.arc(x, y, 96, 0, Math.PI * 2); ctx.lineWidth = 8; ctx.strokeStyle = `rgba(20,14,30,${.8 * k})`; ctx.stroke();
+  }
+
+  function draw(cx){
+    ctx = cx || A.ctx();
+    if (!G) return;
+    const m = M(), v = G.vise, t = G.t;
+    decor();
+    cible(G.bx, CY, m.R, G.ang);
+    // la flèche qui vole
+    if (G.phase === 'vol'){
+      const w = G.vol, e = Math.min(1, G.pt / .3), x = w.x0 + (w.x1 - w.x0) * e, y = w.y0 + (w.y1 - w.y0) * e, L = 110 * (1 - e) + 10;
+      ln([[x + L * .12, y + L], [x, y]], 4, '#5a3a24'); ln([[x + L * .12, y + L], [x + L * .12, y + L - 8]], 6, COL.orange);
+    }
+    // l'arc
+    if (G.phase !== 'fin'){
+      const [x, y] = G.phase === 'vise' ? visee() : [v.ax, v.ay];
+      const d = G.phase === 'vise' ? v.draw : 0;
+      if (m.arc === 'long') arc('long', x, y, d, t);
+      else {
+        if (G.phase === 'vise' && d > .5) visette(x, y, Math.min(1, (d - .5) * 2));
+        arc(m.arc, x, y + VISEUR_DY, d, t); viseur(x, y);
+      }
+    }
+    // textes du haut
+    A.txt(m.nom, 150, 34, 20, COL.white, { lw: 6, max: 260 });
+    A.txt('Flèche ' + Math.min(3, G.f + 1) + '/3', 70, 66, 18, COL.yellow, { lw: 5 });
+    A.txt(G.total + ' pts', 220, 66, 18, COL.white, { lw: 5 });
+    if (G.phase === 'annonce'){ const k = Math.min(1, G.pt * 5); ctx.save(); ctx.translate(180, 470); ctx.scale(.6 + k * .4, .6 + k * .4); A.txt(m.nom, 0, 0, 30, COL.yellow, { lw: 8, max: 330 }); ctx.restore(); }
+  }
+
+  function vignette(c, x, y, w, h, t){
+    const old = ctx; ctx = c; const k = h / 230;
+    c.save(); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-150, -230);
+    c.fillStyle = '#9fdcff'; c.fillRect(-150, -20, 600, 150); c.fillStyle = '#6fcf4a'; c.fillRect(-150, 130, 600, 200);
+    const G0 = G; G = { fleches: [{ lx: 4, ly: -6 }, { lx: -14, ly: 10 }] };
+    cible(170, 110, 62, t * .3);
+    G = G0;
+    c.save(); c.translate(70, 30); c.scale(.55, .55); arc('long', 0, 170, 1, t); c.restore();
+    c.restore(); ctx = old;
+  }
+
+  Bourdi.ajouter({
+    id: 'bourdihood', titre: "bourdi'hood", court: "bourdi'hood",
+    consigne: "Tire vers le bas pour bander l'arc, vise avec le doigt et lâche !",
+    bientot: true,                 // nouvelle épreuve : seulement en mode TEST, « À venir » pour les autres
+    seuils: { S: 80, A: 70, B: 55, C: 40, D: 25 },
+    format: n => n + ' pts',
+    musique: 'jeu', vignette,
+    start(){ ctx = A.ctx(); nouvellePartie(); },
+    update, draw, down, move, up, etat: () => G, MANCHES
+  });
+})();
+
+</script>
 <!-- FIN -->
 <script>Bourdi.demarrer();</script>
 
