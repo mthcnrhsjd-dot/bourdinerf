@@ -6615,42 +6615,86 @@ pseudoShow(scene === 'name');
     });
   }
 
-  // l'arc vu par le tireur : la main gauche tient la poignée, la corde part vers le visage (en bas à droite)
-  function arc(type, px, py, draw, t){
-    // px, py = pointe de la flèche
-    const gx = px - 30, gy = py + 30;                // la poignée (à gauche de la flèche, pour voir la cible)
-    const haut = [gx - 26 + draw * 10, gy - 300 + draw * 22], bas = [gx - 26 + draw * 10, gy + 300 - draw * 22];
-    const nock = [px + 4 + draw * 40, gy + 10 + draw * 330];
-    const coul = type === 'long' ? '#3f9a2a' : type === 'poulies' ? '#2f6bff' : '#2b2b33';
-    // la corde
-    ln([haut, nock, bas], 2.5, '#f2f2f2'); ln([haut, nock, bas], 1, 'rgba(0,0,0,.35)');
-    // les branches
+  // l'arc vu un peu de côté : forme « ( » bien courbée, la corde à droite,
+  // la main gauche sur la poignée, la main droite qui tire la corde vers le visage
+  function arc(type, px, py, draw, t, fleche = true){
+    // px, py = pointe de la flèche, posée sur la main gauche
+    const gx = px - 30, gy = py + 26;                 // la poignée (à gauche de la flèche, pour voir la cible)
+    const H = type === 'poulies' ? 228 : 245;          // demi-hauteur de l'arc
+    const pli = draw * 14;                              // les branches plient quand on tire
+    const haut = [gx + 46 + pli, gy - H + pli * 1.4], bas = [gx + 46 + pli, gy + H - pli * 1.4];
+    const nock = [gx + 52 + draw * 70, gy + 40 + draw * 300];
+    const bois = type === 'long' ? ['#2f8a24', '#5cc44a', '#1f5e18'] : type === 'poulies' ? ['#2f6bff', '#6f9bff', '#1a3fa8'] : ['#2b2b33', '#55555f', '#141418'];
+    const corde = () => { ln([haut, nock, bas], 3, '#fdfdfd'); ln([haut, nock, bas], 1, 'rgba(0,0,0,.3)'); };
+    // une branche courbée de la poignée jusqu'au bout, épaisse au milieu, fine au bout
+    function branche(d, x0, y0, x1, y1, cx, cy, ep){
+      const pts = []; for (let i = 0; i <= 14; i++){ const u = i / 14, a = (1 - u) * (1 - u), b = 2 * u * (1 - u), c = u * u;
+        pts.push([a * x0 + b * cx + c * x1, a * y0 + b * cy + c * y1, ep * (1 - u * .6)]); }
+      for (let i = 0; i < pts.length - 1; i++) ln([pts[i], pts[i + 1]], pts[i][2] + 6, COL.ink);
+      for (let i = 0; i < pts.length - 1; i++) ln([pts[i], pts[i + 1]], pts[i][2], bois[0]);
+      for (let i = 0; i < pts.length - 1; i++) ln([[pts[i][0] - pts[i][2] * .22, pts[i][1]], [pts[i + 1][0] - pts[i + 1][2] * .22, pts[i + 1][1]]], pts[i][2] * .25, bois[1]);
+    }
+    corde();
     if (type === 'poulies'){
-      ln([[gx, gy - 70], [gx - 6, gy - 180], haut], 14, COL.ink); ln([[gx, gy - 70], [gx - 6, gy - 180], haut], 9, coul);
-      ln([[gx, gy + 70], [gx - 6, gy + 180], bas], 14, COL.ink); ln([[gx, gy + 70], [gx - 6, gy + 180], bas], 9, coul);
-      A.circle(haut[0], haut[1], 13, '#c9d0dc', 3.5); A.circle(haut[0], haut[1], 4, COL.ink, 0);
-      A.circle(bas[0], bas[1], 13, '#c9d0dc', 3.5); A.circle(bas[0], bas[1], 4, COL.ink, 0);
-      A.blob(gx - 10, gy - 90, 20, 180, 7, '#1f4fd8', 3.5);
+      // branches courtes et droites, poulies en forme d'œuf, câbles, stabilisateur
+      [-1, 1].forEach(d => {
+        const tip = d < 0 ? haut : bas;
+        branche(d, gx + 6, gy + d * 100, tip[0] - 4, tip[1] - d * 6, gx + 4, gy + d * 175, 19);
+        ln([[gx + 6, gy + d * 108], [gx + 5, gy + d * 165], [tip[0] - 6, tip[1] - d * 14]], 2.5, bois[2]);   // branche fendue en deux
+      });
+      ln([[haut[0] - 6, haut[1] + 10], [bas[0] - 2, bas[1] - 30]], 2, '#222');       // les câbles
+      ln([[bas[0] - 6, bas[1] - 10], [haut[0] - 2, haut[1] + 30]], 2, '#222');
+      [haut, bas].forEach(([x, y], i) => {
+        ctx.save(); ctx.translate(x, y); ctx.rotate((i ? -1 : 1) * (.3 + draw * 1.2));
+        ell(0, 0, 17, 13, '#d7dce6', 3.5); ell(4, 0, 7, 5, '#9aa3b2', 2); A.circle(-5, 0, 3, COL.ink, 0);
+        ctx.restore();
+      });
+      // le corps (riser) avec ses trous
+      ctx.beginPath(); ctx.moveTo(gx + 2, gy - 112); ctx.quadraticCurveTo(gx - 22, gy - 40, gx - 6, gy + 6); ctx.lineTo(gx - 6, gy + 50);
+      ctx.quadraticCurveTo(gx - 22, gy + 80, gx + 2, gy + 112); ctx.lineTo(gx + 18, gy + 108); ctx.quadraticCurveTo(gx, gy + 70, gx + 12, gy + 40);
+      ctx.lineTo(gx + 12, gy - 20); ctx.quadraticCurveTo(gx, gy - 70, gx + 18, gy - 108); ctx.closePath();
+      ctx.fillStyle = bois[0]; ctx.fill(); ctx.lineWidth = 3.5; ctx.strokeStyle = COL.ink; ctx.lineJoin = 'round'; ctx.stroke();
+      ell(gx + 2, gy - 70, 4, 18, bois[2], 0, .15); ell(gx + 2, gy + 82, 4, 16, bois[2], 0, -.15);
     } else {
-      const k = type === 'long' ? 12 : 11;
-      ctx.beginPath(); ctx.moveTo(haut[0], haut[1]); ctx.quadraticCurveTo(gx - 6, gy - 150, gx, gy); ctx.quadraticCurveTo(gx - 6, gy + 150, bas[0], bas[1]);
-      ctx.lineCap = 'round'; ctx.lineWidth = k + 5; ctx.strokeStyle = COL.ink; ctx.stroke(); ctx.lineWidth = k; ctx.strokeStyle = coul; ctx.stroke();
-      if (type === 'oneida'){            // les poulies cachées dans les branches
-        [[-1], [1]].forEach(([d]) => { const yy = gy + d * 205, xx = gx - 14; A.circle(xx, yy, 9, '#555', 3); A.circle(xx, yy, 3, COL.orange, 0); });
-        A.blob(gx - 9, gy - 60, 18, 120, 6, '#3a3a44', 3.5); ln([[gx, gy - 56], [gx, gy + 56]], 3, COL.orange);
-      } else A.blob(gx - 8, gy - 30, 16, 60, 6, '#7a4a28', 3);
+      // arc long (simple, bois vert) ou Oneida (bouts recourbés + poulies cachées)
+      [-1, 1].forEach(d => {
+        const tip = d < 0 ? haut : bas;
+        branche(d, gx, gy + d * 30, tip[0], tip[1], gx - 34, gy + d * (H * .7), 13);
+        if (type === 'long'){ ell(tip[0], tip[1] + d * 4, 5, 9, '#f3e3c0', 2.5); }
+        else {
+          // bout recourbé vers la corde + petite poulie dans la branche
+          ln([[tip[0], tip[1]], [tip[0] + 12, tip[1] - d * 6]], 11, COL.ink); ln([[tip[0], tip[1]], [tip[0] + 12, tip[1] - d * 6]], 6, bois[0]);
+          const mx = gx - 18, my = gy + d * (H * .55);
+          A.circle(mx, my, 9, '#d7dce6', 3); A.circle(mx, my, 3.5, COL.orange, 0);
+          ln([[mx + 6, my], [tip[0] - 3, tip[1] + d * 10]], 1.5, '#222');
+        }
+      });
+      if (type === 'oneida'){
+        A.blob(gx - 12, gy - 48, 22, 96, 8, '#3a3a44', 3.5); ln([[gx - 1, gy - 42], [gx - 1, gy + 42]], 3, COL.orange);
+        ln([[gx - 8, gy + 40], [gx - 46, gy + 86]], 8, COL.ink); ln([[gx - 8, gy + 40], [gx - 46, gy + 86]], 4, '#3a3a44');
+      } else {
+        // poignée en cuir enroulé
+        A.blob(gx - 11, gy - 30, 22, 60, 8, '#8a5a36', 3.5);
+        for (let i = -22; i <= 22; i += 8) ln([[gx - 9, gy + i - 3], [gx + 9, gy + i + 3]], 2, '#5a3a24');
+      }
     }
     // la flèche
-    if (draw > 0) {
-      ln([nock, [px, py]], 6, COL.ink); ln([nock, [px, py]], 3.5, '#c99a5a');
-      poly([[px, py - 8], [px - 5, py + 6], [px + 5, py + 6]], '#9aa3b2', 2.5);
-      const fx = nock[0] - (nock[0] - px) * .06, fy = nock[1] - (nock[1] - py) * .06;
-      poly([[fx, fy], [fx - 12, fy + 26], [fx - 3, fy + 22]], COL.orange, 2); poly([[fx, fy], [fx + 12, fy + 26], [fx + 3, fy + 22]], COL.orange, 2);
+    if (fleche){
+    ln([nock, [px, py]], 6, COL.ink); ln([nock, [px, py]], 3.5, '#c99a5a');
+    poly([[px, py - 9], [px - 5, py + 6], [px + 5, py + 6]], '#c9d0dc', 2.5);
+    const fx = nock[0] - (nock[0] - px) * .04, fy = nock[1] - (nock[1] - py) * .04;
+    poly([[fx, fy - 4], [fx - 11, fy + 24], [fx - 2, fy + 20]], COL.orange, 2); poly([[fx, fy - 4], [fx + 11, fy + 24], [fx + 2, fy + 20]], COL.yellow, 2);
     }
-    // le bras gauche et la main
-    ln([[-40, 760], [gx - 14, gy + 26]], 44, COL.ink); ln([[-40, 760], [gx - 14, gy + 26]], 36, '#4f6fae');
-    ln([[gx - 40, gy + 70], [gx - 10, gy + 22]], 26, COL.ink); ln([[gx - 40, gy + 70], [gx - 10, gy + 22]], 19, '#f1c39a');
-    A.blob(gx - 16, gy - 4, 26, 36, 11, '#f1c39a', 3.5);
+    // la main droite qui tient la corde (on la voit tant qu'elle n'est pas sortie de l'écran)
+    if (nock[1] < 740){
+      ln([[nock[0] + 30, nock[1] + 120], [nock[0] + 8, nock[1] + 14]], 30, COL.ink); ln([[nock[0] + 30, nock[1] + 120], [nock[0] + 8, nock[1] + 14]], 23, '#4f6fae');
+      A.blob(nock[0] - 6, nock[1] - 10, 26, 30, 11, '#f1c39a', 3.5);
+      ln([[nock[0] - 2, nock[1] - 2], [nock[0] + 14, nock[1] - 2]], 2, '#c98f66');
+    }
+    // le bras gauche et la main sur la poignée
+    ln([[-40, 760], [gx - 10, gy + 24]], 44, COL.ink); ln([[-40, 760], [gx - 10, gy + 24]], 36, '#4f6fae');
+    A.blob(gx - 16, gy - 14, 30, 40, 12, '#f1c39a', 3.5);
+    ln([[gx - 12, gy - 2], [gx + 10, gy - 2]], 2, '#c98f66'); ln([[gx - 12, gy + 8], [gx + 10, gy + 8]], 2, '#c98f66');
   }
   // viseur à 3 points (arcs à poulies) : centré sur le point jaune
   function viseur(x, y){
@@ -6682,10 +6726,10 @@ pseudoShow(scene === 'name');
     if (G.phase !== 'fin'){
       const [x, y] = G.phase === 'vise' ? visee() : [v.ax, v.ay];
       const d = G.phase === 'vise' ? v.draw : 0;
-      if (m.arc === 'long') arc('long', x, y, d, t);
+      if (m.arc === 'long') arc('long', x, y, d, t, G.phase === 'vise');
       else {
         if (G.phase === 'vise' && d > .5) visette(x, y, Math.min(1, (d - .5) * 2));
-        arc(m.arc, x, y + VISEUR_DY, d, t); viseur(x, y);
+        arc(m.arc, x, y + VISEUR_DY, d, t, G.phase === 'vise'); viseur(x, y);
       }
     }
     // textes du haut
