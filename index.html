@@ -628,41 +628,43 @@ function drawTitle(){
 }
 
 // --- Menu des épreuves ---
-// deux colonnes : gauche, droite, gauche, droite…
-const CARD_W = 158, CARD_H = 214, CARD_Y = 116, GAP = 12;
+// trois colonnes (17 nov., sa demande : moins à faire défiler)
+const COLS = 3, CARD_W = 108, CARD_H = 170, CARD_Y = 114, GAP = 10, CARD_X0 = 10, CARD_GX = 8;
 function drawMenu(){
   sunburst(180, -100, COL.sky, '#7fd4ff', T * .1, 20);
-  const rows = Math.ceil(EPREUVES.length / 2);
+  const rows = Math.ceil(EPREUVES.length / COLS);
   const maxScroll = Math.max(0, CARD_Y + rows * (CARD_H + GAP) - 700);
   menuScroll = Math.max(0, Math.min(maxScroll, menuScroll));
   ctx.save(); ctx.beginPath(); ctx.rect(-200, 100, W + 400, H + 400); ctx.clip();
   EPREUVES.forEach((ep, i) => {
-    const x = 16 + (i % 2) * (CARD_W + 12), y = CARD_Y + Math.floor(i / 2) * (CARD_H + GAP) - menuScroll, open = unlocked(i), rec = recOf(ep.id);
+    const col = i % COLS, x = CARD_X0 + col * (CARD_W + CARD_GX), y = CARD_Y + Math.floor(i / COLS) * (CARD_H + GAP) - menuScroll, open = unlocked(i), rec = recOf(ep.id);
     if (y > H + 100 || y + CARD_H < 90) return;
-    const k = Math.min(1, Math.max(0, (sceneT - i * .04) / .25)), sx = (1 - k) * (i % 2 ? 380 : -380);
+    const k = Math.min(1, Math.max(0, (sceneT - i * .03) / .25)), sx = (1 - k) * (col === 0 ? -380 : col === COLS - 1 ? 380 : (Math.floor(i / COLS) % 2 ? 380 : -380));
     ctx.save(); ctx.translate(sx, 0);
     buttons.push({ id: 'ep-' + i, x, y, w: CARD_W, h: CARD_H });
-    const down = pressId === 'ep-' + i ? 3 : 0;
-    rr(x, y + 7, CARD_W, CARD_H, 20); ctx.fillStyle = COL.ink; ctx.fill();
-    blob(x, y + down, CARD_W, CARD_H, 20, COL.white, 5);
+    const down = pressId === 'ep-' + i ? 3 : 0, cx = x + CARD_W / 2;
+    rr(x, y + 6, CARD_W, CARD_H, 16); ctx.fillStyle = COL.ink; ctx.fill();
+    blob(x, y + down, CARD_W, CARD_H, 16, COL.white, 4);
     // illustration
-    const ix = x + 9, iy = y + 9 + down, iw = CARD_W - 18, ih = 104;
-    ctx.save(); rr(ix, iy, iw, ih, 14); ctx.clip(); ep.vignette(ctx, ix, iy, iw, ih, T); ctx.restore();
-    rr(ix, iy, iw, ih, 14); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.stroke();
-    txt(ep.titre, x + CARD_W / 2, y + 134 + down, 19, COL.red, { max: CARD_W - 16, lw: 5 });
-    if (ep.bientot) txt('À venir', x + CARD_W / 2, y + 172 + down, 16, COL.orange, { lw: 0, max: CARD_W - 16 });
-    else if (!rec.tries) txt('Pas encore jouée', x + CARD_W / 2, y + 172 + down, 14, COL.violet, { lw: 0, max: CARD_W - 16 });
+    const ix = x + 7, iy = y + 7 + down, iw = CARD_W - 14, ih = 74;
+    ctx.save(); rr(ix, iy, iw, ih, 11); ctx.clip(); ep.vignette(ctx, ix, iy, iw, ih, T); ctx.restore();
+    rr(ix, iy, iw, ih, 11); ctx.lineWidth = 3; ctx.strokeStyle = COL.ink; ctx.stroke();
+    txt(ep.titre, cx, y + 100 + down, 15, COL.red, { max: CARD_W - 12, lw: 4 });
+    if (!open) {}
+    else if (ep.bientot) txt('À venir', cx, y + 134 + down, 14, COL.orange, { lw: 0, max: CARD_W - 12 });
+    else if (!rec.tries) txt('Pas encore jouée', cx, y + 134 + down, 12, COL.violet, { lw: 0, max: CARD_W - 12 });
     else {
-      rankBadge(rec.rank, x + 32, y + 178 + down, 40);
-      txt('Record : ' + ep.format(rec.best), x + 58, y + 170 + down, 12, COL.ink, { align: 'left', lw: 0, max: CARD_W - 64 });
-      txt('Parties : ' + rec.tries, x + 58, y + 189 + down, 12, COL.ink, { align: 'left', lw: 0, max: CARD_W - 64 });
+      rankBadge(rec.rank, x + 22, y + 138 + down, 30);
+      txt('Record :', x + 41, y + 122 + down, 10, COL.ink, { align: 'left', lw: 0, max: CARD_W - 46 });
+      txt(ep.format(rec.best), x + 41, y + 138 + down, 11, COL.ink, { align: 'left', lw: 0, max: CARD_W - 46 });
+      txt('Parties : ' + rec.tries, x + 41, y + 154 + down, 10, COL.ink, { align: 'left', lw: 0, max: CARD_W - 46 });
     }
     if (!open){
-      rr(x, y, CARD_W, CARD_H, 20); ctx.fillStyle = 'rgba(29,21,48,.72)'; ctx.fill();
-      icoLock(x + CARD_W / 2, y + 58, 1.1);
-      txt(ep.titre, x + CARD_W / 2, y + 134, 19, COL.white, { max: CARD_W - 16, lw: 5 });
-      const ls = wrap(ep.bientot ? 'À venir' : "Fais C à l'épreuve d'avant", CARD_W - 20, 14);
-      ls.forEach((l, j) => txt(l, x + CARD_W / 2, y + 166 + j * 19, 14, COL.yellow, { lw: 4 }));
+      rr(x, y, CARD_W, CARD_H, 16); ctx.fillStyle = 'rgba(29,21,48,.72)'; ctx.fill();
+      icoLock(cx, y + 44, .85);
+      txt(ep.titre, cx, y + 100, 15, COL.white, { max: CARD_W - 12, lw: 4 });
+      const ls = wrap(ep.bientot ? 'À venir' : "Fais C à l'épreuve d'avant", CARD_W - 14, 12);
+      ls.forEach((l, j) => txt(l, cx, y + 124 + j * 16, 12, COL.yellow, { lw: 3 }));
     }
     ctx.restore();
   });
@@ -6755,6 +6757,386 @@ pseudoShow(scene === 'name');
     consigne: "Tire vers le bas pour bander l'arc, vise avec le doigt et lâche !",
     seuils: { S: 80, A: 70, B: 55, C: 40, D: 25 },
     format: n => n + ' pts',
+    musique: 'jeu', vignette,
+    start(){ ctx = A.ctx(); nouvellePartie(); },
+    update, draw, down, move, up, etat: () => G, MANCHES
+  });
+})();
+
+</script>
+<script>
+'use strict';
+// =====================================================================
+//  ÉPREUVE 25 — B'hodor   (EN TEST : bientot, jouable en mode TEST)
+//  Des invités arrivent à la maison comme des zombies et poussent la porte.
+//  On voit la maison EN COUPE (de côté) : dehors à gauche, l'entrée à droite.
+//  Tu dessines avec le doigt : chaque trait tombe et devient un vrai objet
+//  solide (physique maison : corps rigides faits de petits ronds).
+//  Pour bloquer, l'objet doit se coincer entre la porte (et sa poignée) et le sol.
+//  Chaque manche : 10 s pour dessiner, une réserve d'encre ; dès que l'encre
+//  est vide (ou les 10 s finies), ils poussent.
+//   1) 2 invités, assez d'encre pour aller jusqu'au mur : il faut tenir 5 s.
+//   2) 4 invités, moins d'encre, ils poussent fort : il faut tenir 5 s.
+//   3) 5 invités… puis Tonton Bidou les pousse de son chemin et pousse seul.
+//      Il rentre à coup sûr (sa force monte jusqu'à casser l'objet) :
+//      chaque seconde où la porte tient compte quand même.
+//  Manche ratée (porte ouverte en manche 1 ou 2) = la partie s'arrête.
+//  Score = secondes où la porte a tenu (en dixièmes : 142 = 14,2 s).
+//  Textes (17 nov., dictés, À CONFIRMER) : « B'hodor », consigne,
+//  « Manche 1/2/3 », « Dessine ! », « Ils poussent ! », « Ça tient ! »,
+//  « Ils sont rentrés ! », bulle « Bouuuh ! », unité « secondes ».
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', green: '#7ad81e', sky: '#5ec8ff', pink: '#ff4fa3' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const P = () => Bourdi.persos;
+
+  // ---------- la scène ----------
+  const YF = 600;            // le sol
+  const DX0 = 130;           // face intérieure de la porte fermée
+  const DEP = 16;            // épaisseur de la porte
+  const YT = 330;            // haut de la porte
+  const YH = 468;            // hauteur de la poignée (côté maison)
+  const XW = 356;            // bord droit pour dessiner (l'entrée continue après : pas de mur)
+  const OUVERTE = 60;        // la porte a reculé de 60 px = ils sont entrés
+  const R = 6, PAS = 8;      // les petits ronds qui forment un objet
+
+  const MANCHES = [
+    { nom: 'Manche 1', invites: 2, encre: 250, force: 6000,  tenir: 5 },
+    { nom: 'Manche 2', invites: 4, encre: 180, force: 60000, tenir: 5 },
+    { nom: 'Manche 3', invites: 5, encre: 180, force: 60000, tenir: 0, bidou: true }
+  ];
+  const BIDOU_MONTE = 9000;        // sa force monte de tant par seconde…
+  const BIDOU_CASSE = 115000;      // …et au-delà, l'objet craque
+  const G_ = 900, MU_SOL = .75, MU_PORTE = .5, MU_OBJ = .5, MPORTE = 40;
+
+  let G = null;
+  function nouvellePartie(){
+    G = { t: 0, m: 0, total: 0, phase: 'annonce', pt: 0, corps: [], trait: null, encre: 0,
+      dx: DX0, vd: 0, force: 0, tenu: 0, invites: [], bidou: null, finT: 0, casse: false, bulles: [] };
+    debutManche();
+  }
+  const M = () => MANCHES[G.m];
+  function debutManche(){
+    const m = M();
+    G.corps = []; G.trait = null; G.encre = m.encre; G.dx = DX0; G.vd = 0; G.force = 0; G.tenu = 0; G.casse = false;
+    G.phase = 'annonce'; G.pt = 0; G.bidou = null; G.bulles = []; G.chute = 0; G.boum = false;
+    G.invites = [];
+    for (let i = 0; i < m.invites; i++){
+      const g = P().makePerson('zombie');
+      G.invites.push({ g, x: -60 - i * 40, cible: DX0 - DEP - 22 - i * 15 - (i % 2) * 6, s: .62 - (i % 2) * .04, ph: Math.random() * 6, vole: null });
+    }
+  }
+
+  // ---------- les objets dessinés : corps rigides faits de ronds ----------
+  function creeCorps(pts){
+    let cx = 0, cy = 0; pts.forEach(p => { cx += p.x; cy += p.y; }); cx /= pts.length; cy /= pts.length;
+    const loc = pts.map(p => ({ x: p.x - cx, y: p.y - cy }));
+    const m = pts.length; let I = 0; loc.forEach(p => { I += p.x * p.x + p.y * p.y + R * R / 2; });
+    return { loc, x: cx, y: cy, a: 0, vx: 0, vy: 0, w: 0, m, im: 1 / m, iI: 1 / I, c: Math.cos(0), s: Math.sin(0) };
+  }
+  const monde = (b, p) => [b.x + b.c * p.x - b.s * p.y, b.y + b.s * p.x + b.c * p.y];
+
+  // ---------- un pas de physique ----------
+  function contacts(){
+    const out = [], D = G.dx;
+    G.corps.forEach(b => {
+      b.c = Math.cos(b.a); b.s = Math.sin(b.a);
+      b.w_ = b.loc.map(p => monde(b, p));
+      let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+      b.w_.forEach(([x, y]) => { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); });
+      b.bb = [x0 - R, y0 - R, x1 + R, y1 + R];
+      b.w_.forEach(([x, y]) => {
+        if (y + R > YF) out.push({ A: b, B: null, nx: 0, ny: -1, pen: y + R - YF, px: x, py: YF, mu: MU_SOL });
+        if (G.phase !== 'entre'){
+          boite(out, b, x, y, D - DEP, YT, D, YF + 20);         // la porte
+          boite(out, b, x, y, D, YH - 6, D + 22, YH + 6);        // la poignée
+        }
+      });
+    });
+    for (let i = 0; i < G.corps.length; i++) for (let j = i + 1; j < G.corps.length; j++){
+      const a = G.corps[i], b = G.corps[j];
+      if (a.bb[2] < b.bb[0] || b.bb[2] < a.bb[0] || a.bb[3] < b.bb[1] || b.bb[3] < a.bb[1]) continue;
+      a.w_.forEach(([ax, ay]) => b.w_.forEach(([bx, by]) => {
+        const dx = ax - bx, dy = ay - by, d2 = dx * dx + dy * dy;
+        if (d2 < 4 * R * R && d2 > 1e-6){ const d = Math.sqrt(d2); out.push({ A: a, B: b, nx: dx / d, ny: dy / d, pen: 2 * R - d, px: (ax + bx) / 2, py: (ay + by) / 2, mu: MU_OBJ }); }
+      }));
+    }
+    return out;
+  }
+  function boite(out, b, x, y, x0, y0, x1, y1){
+    const qx = Math.max(x0, Math.min(x1, x)), qy = Math.max(y0, Math.min(y1, y)), dx = x - qx, dy = y - qy, d2 = dx * dx + dy * dy;
+    if (d2 >= R * R) return;
+    let nx, ny, pen;
+    if (d2 > 1e-6){ const d = Math.sqrt(d2); nx = dx / d; ny = dy / d; pen = R - d; }
+    else { nx = 1; ny = 0; pen = x1 - x + R; }              // rond dans la porte : on le pousse côté maison
+    out.push({ A: b, B: 'porte', nx, ny, pen, px: qx, py: qy, mu: MU_PORTE });
+  }
+  function vitesse(b, rx, ry){ return [b.vx - b.w * ry, b.vy + b.w * rx]; }
+  function pousse(b, rx, ry, jx, jy, sg){ b.vx += sg * jx * b.im; b.vy += sg * jy * b.im; b.w += sg * (rx * jy - ry * jx) * b.iI; }
+
+  function pas(dt, poussent){
+    const imD = 1 / MPORTE;
+    G.corps.forEach(b => { b.vy += G_ * dt; b.w *= .998; });
+    if (poussent) G.vd += G.force / MPORTE * dt;
+    G.vd *= .995;
+    const cs = contacts();
+    let touche = false;
+    cs.forEach(c => {
+      c.rax = c.px - c.A.x; c.ray = c.py - c.A.y;
+      if (c.B && c.B !== 'porte'){ c.rbx = c.px - c.B.x; c.rby = c.py - c.B.y; }
+      const tx = -c.ny, ty = c.nx;
+      const k = (nx, ny) => { let v = c.A.im + c.A.iI * Math.pow(c.rax * ny - c.ray * nx, 2);
+        if (c.B === 'porte') v += imD * nx * nx; else if (c.B) v += c.B.im + c.B.iI * Math.pow(c.rbx * ny - c.rby * nx, 2); return v; };
+      c.kn = k(c.nx, c.ny); c.kt = k(tx, ty); c.tx = tx; c.ty = ty; c.jn = 0; c.jt = 0;
+      c.bias = Math.min(240, .2 / dt * Math.max(0, c.pen - .4));
+      if (c.B === 'porte' && c.nx > .5) touche = true;
+    });
+    const ferme = () => G.dx <= DX0 + .01;
+    for (let it = 0; it < 10; it++){
+      cs.forEach(c => {
+        const [ax, ay] = vitesse(c.A, c.rax, c.ray);
+        let bx = 0, by = 0;
+        if (c.B === 'porte') bx = G.vd; else if (c.B) [bx, by] = vitesse(c.B, c.rbx, c.rby);
+        const rvx = ax - bx, rvy = ay - by;
+        // normal
+        let dj = (-(rvx * c.nx + rvy * c.ny) + c.bias) / c.kn;
+        const jn = Math.max(0, c.jn + dj); dj = jn - c.jn; c.jn = jn;
+        appl(c, c.nx * dj, c.ny * dj, imD);
+        // frottement
+        const [ax2, ay2] = vitesse(c.A, c.rax, c.ray);
+        let bx2 = 0, by2 = 0;
+        if (c.B === 'porte') bx2 = G.vd; else if (c.B) [bx2, by2] = vitesse(c.B, c.rbx, c.rby);
+        let dt_ = -((ax2 - bx2) * c.tx + (ay2 - by2) * c.ty) / c.kt;
+        const lim = c.mu * c.jn, jt = Math.max(-lim, Math.min(lim, c.jt + dt_)); dt_ = jt - c.jt; c.jt = jt;
+        appl(c, c.tx * dt_, c.ty * dt_, imD);
+        if (ferme() && G.vd < 0) G.vd = 0;          // la porte ne peut pas s'ouvrir vers dehors
+      });
+    }
+    G.corps.forEach(b => {
+      b.x += b.vx * dt; b.y += b.vy * dt; b.a += b.w * dt;
+      if (b.y > 900 || b.x > 520) b.mort = true;
+    });
+    G.corps = G.corps.filter(b => !b.mort);
+    G.dx += G.vd * dt; if (G.dx < DX0){ G.dx = DX0; if (G.vd < 0) G.vd = 0; }
+    return touche;
+  }
+  function appl(c, jx, jy, imD){
+    pousse(c.A, c.rax, c.ray, jx, jy, 1);
+    if (c.B === 'porte') G.vd -= jx * imD;
+    else if (c.B) pousse(c.B, c.rbx, c.rby, jx, jy, -1);
+  }
+
+  // ---------- Tonton Bidou casse l'objet ----------
+  function casse(){
+    if (G.casse) return; G.casse = true;
+    const morceaux = [];
+    G.corps.forEach(b => {
+      for (let i = 0; i < b.loc.length; i += 3){
+        const pts = b.loc.slice(i, i + 3).map(p => { const [x, y] = monde(b, p); return { x, y }; });
+        const n = creeCorps(pts); n.vx = b.vx + 160 + Math.random() * 220; n.vy = -120 - Math.random() * 260; n.w = (Math.random() - .5) * 14; n.morceau = true;
+        morceaux.push(n);
+      }
+    });
+    G.corps = morceaux;
+    A.secousse(10, .35); A.sons.erreur();
+    A.bruit(0, .3, .35, 'bandpass', 1400, 1.5, 300);
+    A.particules(G.dx + 30, YH + 40, 22, { colors: ['#c99a5a', '#8a5a36', COL.yellow], speed: 260, size: 6, life: .7 });
+  }
+
+  // ---------- déroulé ----------
+  function update(dt){
+    if (!G) return;
+    dt = Math.max(0, Math.min(dt, 1 / 20));
+    G.t += dt; G.pt += dt;
+    const m = M();
+    // les invités arrivent et se collent à la porte
+    G.invites.forEach(z => {
+      if (z.vole){ z.vole.vy += 900 * dt; z.x += z.vole.vx * dt; z.vole.y += z.vole.vy * dt; z.vole.r += z.vole.vr * dt; return; }
+      const but = G.phase === 'entre' ? 420 : z.cible + (G.dx - DX0); z.x += Math.max(-200 * dt, Math.min(G.phase === 'entre' ? 75 * dt : 110 * dt, but - z.x));
+    });
+    if (G.phase !== 'pousse' && G.phase !== 'entre' && Math.random() < dt * 1.1 && G.invites.length){
+      const z = G.invites[Math.floor(Math.random() * G.invites.length)]; if (!z.vole) G.bulles.push({ z, t: 0 });
+    }
+    G.bulles.forEach(b => b.t += dt); G.bulles = G.bulles.filter(b => b.t < 1.1);
+
+    const sub = 3, h = dt / sub;
+    let touche = false;
+    for (let i = 0; i < sub; i++) touche = pas(h, G.phase === 'pousse') || touche;
+
+    if (G.phase === 'annonce' && G.pt > 1.3){ G.phase = 'dessin'; G.pt = 0; A.sons.go(); }
+    if (G.phase === 'dessin' && (G.pt >= 10 || G.encre <= 0)){
+      finTrait(); G.phase = 'attente'; G.pt = 0;
+    }
+    if (G.phase === 'attente' && G.pt > .9){
+      if (m.bidou){ G.phase = 'bidou'; G.pt = 0; G.bidou = { g: P().makePerson('bidou'), x: -120 }; }
+      else { G.phase = 'pousse'; G.pt = 0; G.force = m.force; A.sons.go(); }
+    }
+    if (G.phase === 'bidou'){
+      const b = G.bidou; b.x = Math.min(DX0 - DEP - 52, b.x + 190 * dt);
+      G.invites.forEach((z, i) => { if (!z.vole && b.x > z.x - 70){
+        z.vole = { vx: -120 - Math.random() * 160, vy: -380 - Math.random() * 200, y: 0, r: 0, vr: (Math.random() < .5 ? -1 : 1) * (4 + Math.random() * 4) };
+        A.tone(0, 300 - i * 20, .15, .08, 'square', 120); } });
+      if (b.x >= DX0 - DEP - 52 && G.pt > 1.6){ G.phase = 'pousse'; G.pt = 0; G.force = m.force; A.sons.go(); }
+    }
+    if (G.phase === 'pousse'){
+      if (G.bidou){ G.bidou.x = DX0 - DEP - 52 + (G.dx - DX0); G.force = m.force + BIDOU_MONTE * G.pt; if (G.force > BIDOU_CASSE && touche) casse(); }
+      if (Math.floor(G.pt * 3) !== Math.floor((G.pt - dt) * 3)) A.bruit(0, .12, .12, 'lowpass', 300, 1);
+      if (G.dx - DX0 > OUVERTE){
+        G.tenu = Math.min(G.pt, m.tenir || 99);
+        G.total += G.tenu; G.phase = 'entre'; G.pt = 0; G.chute = 0; G.vd = 0; A.sons.erreur(); A.secousse(8, .3);
+        A.texte('Ils sont rentrés !', 180, 230, { size: 34, color: COL.red, dur: 2.2, vy: -6 });
+      } else if (m.tenir && G.pt >= m.tenir){
+        G.tenu = m.tenir; G.total += m.tenir; G.phase = 'tient'; G.pt = 0; G.force = 0; G.vd = Math.min(G.vd, 0);
+        A.sons.bien(); A.texte('Ça tient !', 180, 250, { size: 40, color: COL.green, dur: 1.6, vy: -10 });
+      } else G.tenu = G.pt;
+    }
+    if (G.phase === 'tient' && G.pt > 1.8){ G.m++; debutManche(); }
+    if (G.phase === 'entre'){ G.vd = 0; G.chute = Math.min(1, G.chute + dt * 2.2 * (.3 + G.chute)); if (G.chute >= 1 && !G.boum){ G.boum = true; A.secousse(9, .3); A.bruit(0, .25, .4, 'lowpass', 400, 1); A.particules(G.dx + 120, YF - 4, 16, { colors: ['#d8c7a8', '#b77a45'], speed: 160, size: 6, life: .6 }); }
+      if (G.bidou) G.bidou.x += 60 * dt; if (G.pt > 2.6 && !G.finT){ G.finT = 1; A.fin({ score: Math.round(G.total * 10) }); } }
+  }
+
+  // ---------- le doigt : dessiner ----------
+  const borne = p => ({ x: Math.max(DX0 + R + 2, Math.min(XW - R, p.x)), y: Math.max(120, Math.min(YF - R - 1, p.y)) });
+  function down(p, id){
+    if (!G || G.phase !== 'dessin' || G.trait || G.encre <= 0) return;
+    const q = borne(p);
+    G.trait = { id, pts: [q], last: q }; G.encre -= PAS; A.tone(0, 500, .03, .03, 'square');
+  }
+  function move(p, id){
+    if (!G || G.phase !== 'dessin' || !G.trait || G.trait.id !== id) return;
+    const t = G.trait, q = borne(p);
+    let d = Math.hypot(q.x - t.last.x, q.y - t.last.y);
+    while (d >= PAS && G.encre > 0){
+      const k = PAS / d, n = { x: t.last.x + (q.x - t.last.x) * k, y: t.last.y + (q.y - t.last.y) * k };
+      t.pts.push(n); t.last = n; G.encre -= PAS; d -= PAS;
+      if (t.pts.length % 4 === 0) A.tone(0, 420 + Math.random() * 120, .02, .015, 'triangle');
+    }
+    if (G.encre <= 0) finTrait();
+  }
+  function up(p, id){
+    if (!G || !G.trait) return;
+    if (id !== 'all' && id !== G.trait.id) return;
+    finTrait();
+  }
+  function finTrait(){
+    if (!G.trait) return;
+    const b = creeCorps(G.trait.pts); G.trait = null;
+    G.corps.push(b); A.tone(0, 220, .08, .06, 'sine', 140);
+  }
+
+  // ---------- dessin ----------
+  const { ln, ell } = Bourdi.chats;
+  function decor(){
+    // dehors : soir
+    const g = ctx.createLinearGradient(0, 0, 0, YF); g.addColorStop(0, '#2a2350'); g.addColorStop(1, '#8a5aa8');
+    ctx.fillStyle = g; ctx.fillRect(-40, -40, DX0 + 40, YF + 40);
+    A.circle(50, 170, 20, '#fff6c8', 0);
+    ctx.fillStyle = '#3c7a3a'; ctx.fillRect(-40, YF, DX0 + 40, 200);
+    // dedans : papier peint + plinthe + parquet
+    ctx.fillStyle = '#f3d9a6'; ctx.fillRect(DX0, -40, 440, YF + 40);
+    for (let x = DX0 + 14; x < 400; x += 28) ln([[x, 0], [x, YF]], 6, 'rgba(232,116,42,.12)');
+    A.blob(DX0, YF - 18, 300, 18, 0, '#fff', 2.5);
+    ctx.fillStyle = '#b77a45'; ctx.fillRect(DX0 - DEP, YF, 400, 200); ln([[-40, YF], [400, YF]], 4, COL.ink);
+    for (let x = DX0 + 30; x < 400; x += 60) ln([[x, YF + 4], [x, YF + 120]], 2, '#9a6236');
+    // le mur coupé au-dessus de la porte (hachures)
+    A.blob(DX0 - DEP - 6, -40, DEP + 12, YT + 40, 0, '#e9e4ee', 3.5);
+    ctx.save(); ctx.beginPath(); ctx.rect(DX0 - DEP - 6, -40, DEP + 12, YT + 40); ctx.clip();
+    for (let y = -40; y < YT + 40; y += 12) ln([[DX0 - DEP - 8, y + 12], [DX0 + 8, y - 8]], 2, '#b9b0c8'); ctx.restore();
+    // un petit cadre au mur
+    A.blob(250, 210, 56, 44, 4, '#8a5a36', 3); A.blob(257, 217, 42, 30, 2, '#9fdcff', 2);
+    ln([[260, 240], [272, 228], [282, 238], [296, 224]], 2.5, '#4fae34');
+  }
+  function porte(){
+    const D = G ? G.dx : DX0, ch = G && G.chute || 0;
+    ctx.save();
+    if (ch){ ctx.translate(D, YF); ctx.rotate(ch * Math.PI / 2 * .97); ctx.translate(-D, -YF); }
+    A.blob(D - DEP, YT, DEP, YF - YT - 2, 3, '#a05a2c', 3.5);
+    ln([[D - DEP / 2, YT + 14], [D - DEP / 2, YF - 16]], 2, '#7a3f1c');
+    // la poignée (côté maison)
+    A.blob(D - 2, YH - 6, 24, 12, 5, '#e8c25a', 3);
+    // la poignée côté dehors
+    A.blob(D - DEP - 14, YH - 5, 16, 10, 4, '#e8c25a', 2.5);
+    ctx.restore();
+  }
+  function corpsDessin(b, couleur){
+    const pts = b.loc.map(p => monde(b, p));
+    if (pts.length === 1){ A.circle(pts[0][0], pts[0][1], R + 1.5, couleur, 3); return; }
+    ln(pts, R * 2 + 5, COL.ink); ln(pts, R * 2, couleur);
+    ln(pts.map(([x, y]) => [x - 1.5, y - 2.5]), 2.5, 'rgba(255,255,255,.45)');
+  }
+  function invite(z, i){
+    const d = G ? G.dx - DX0 : 0, pousse = G && G.phase === 'pousse' && !z.vole;
+    const lean = z.vole ? z.vole.r : (pousse ? .18 + Math.sin(G.t * 9 + z.ph) * .04 : .08 + Math.sin(G.t * 3 + z.ph) * .05);
+    const y = YF + (z.vole ? z.vole.y : 0);
+    P().drawPerson(z.g, z.x, y, z.s, G.t + z.ph, { rot: lean, expr: 'shock' });
+    // les bras tendus vers la porte
+    if (!z.vole){
+      const sh = y - 104 * z.s, hx = G.phase === 'entre' ? z.x + 58 * z.s : Math.min(DX0 - DEP - 4 + d, z.x + 58 * z.s);
+      ln([[z.x + 8, sh], [hx, sh - 4]], 9, COL.ink); ln([[z.x + 8, sh], [hx, sh - 4]], 5, '#8fb07a');
+    }
+  }
+  function draw(cx){
+    ctx = cx || A.ctx();
+    if (!G) return;
+    const m = M();
+    decor();
+    G.invites.forEach(invite);
+    if (G.bidou){ const b = G.bidou, k = G.phase === 'pousse' ? .25 + Math.sin(G.t * 14) * .04 : .1;
+      P().drawPerson(b.g, b.x, YF, .78, G.t, { rot: k, walk: G.phase === 'bidou' && b.x < DX0 - DEP - 53 }); }
+    G.bulles.forEach(b => { if (b.z.vole) return; const k = Math.min(1, b.t * 6);
+      ctx.save(); ctx.translate(Math.max(48, Math.min(DX0 - DEP - 50, b.z.x - 8)), YF - 172 * b.z.s - 18); ctx.scale(k, k);
+      A.blob(-46, -18, 92, 34, 14, COL.white, 3); A.txt('Bouuuh !', 0, -1, 17, COL.ink, { lw: 0 }); ctx.restore(); });
+    porte();
+    G.corps.forEach(b => corpsDessin(b, '#2f6bff'));
+    if (G.trait){ const pts = G.trait.pts.map(p => [p.x, p.y]); if (pts.length === 1) A.circle(pts[0][0], pts[0][1], R + 1.5, '#7fa8ff', 3);
+      else { ln(pts, R * 2 + 5, COL.ink); ln(pts, R * 2, '#7fa8ff'); } }
+
+    // en haut : la manche, le score, l'encre et le temps
+    A.txt(m.nom, 70, 34, 24, COL.white, { lw: 6 });
+    A.txt(fmt(Math.round((G.total + (G.phase === 'pousse' ? G.tenu : 0)) * 10)), 210, 36, 19, COL.yellow, { lw: 5, max: 150 });
+    if (G.phase === 'dessin' || G.phase === 'annonce'){
+      // l'encre : une barre bleue qui se vide
+      const f = Math.max(0, G.encre / m.encre);
+      A.blob(20, 80, 230, 22, 11, 'rgba(0,0,0,.35)', 3);
+      if (f > 0) A.blob(20, 80, Math.max(22, 230 * f), 22, 11, '#2f6bff', 3);
+      // le temps : un rond qui se vide
+      const tt = G.phase === 'dessin' ? Math.max(0, 1 - G.pt / 10) : 1;
+      A.circle(290, 91, 22, 'rgba(0,0,0,.35)', 3);
+      ctx.beginPath(); ctx.moveTo(290, 91); ctx.arc(290, 91, 19, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * tt); ctx.closePath(); ctx.fillStyle = tt < .3 ? COL.red : COL.white; ctx.fill();
+    }
+    if (G.phase === 'pousse' && m.tenir){
+      const f = Math.min(1, G.pt / m.tenir);
+      A.blob(20, 80, 300, 22, 11, 'rgba(0,0,0,.35)', 3); A.blob(20, 80, Math.max(22, 300 * f), 22, 11, COL.green, 3);
+    }
+    // gros textes au milieu
+    if (G.phase === 'annonce') pop(m.nom, G.pt, COL.yellow, 42);
+    if (G.phase === 'dessin' && G.pt < 1.4) pop('Dessine !', G.pt, COL.white, 44);
+    if (G.phase === 'pousse' && G.pt < 1.3) pop('Ils poussent !', G.pt, COL.red, 38);
+  }
+  function pop(s, t, c, size){ const k = Math.min(1, t * 6), a = t > 1 ? Math.max(0, 1 - (t - 1) * 3) : 1;
+    ctx.save(); ctx.globalAlpha = a; ctx.translate(180, 200); ctx.scale(.6 + k * .4, .6 + k * .4); A.txt(s, 0, 0, size, c, { lw: 9, max: 330 }); ctx.restore(); }
+  const fmt = n => (n / 10).toFixed(1).replace('.', ',') + ' secondes';
+
+  function vignette(c, x, y, w, h, t){
+    const old = ctx; ctx = c;
+    c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
+    const k = Math.max(h / 300, w / 300); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-175, -YF - 25);
+    const G0 = G;
+    G = { dx: DX0, t, phase: 'pousse' };
+    decor(); porte();
+    const z = { g: VG, x: DX0 - DEP - 24, s: .62, ph: 0 }; invite(z, 0);
+    const b = creeCorps([...Array(16)].map((_, i) => ({ x: DX0 + 8 + i * 5.2, y: YH + 8 + i * 7.6 })));
+    corpsDessin(b, '#2f6bff');
+    G = G0; c.restore(); ctx = old;
+  }
+  const VG = { kind: 'zombie', skin: '#c98a5a', hair: '#3a2a20', shirt: '#7ad81e', pants: '#3a4a8a', style: 'court' };
+
+  Bourdi.ajouter({
+    id: 'bhodor', titre: "B'hodor", court: "B'hodor", bientot: true,
+    consigne: 'Dessine un objet pour bloquer la porte !',
+    seuils: { S: 160, A: 140, B: 120, C: 100, D: 50 },
+    format: fmt,
     musique: 'jeu', vignette,
     start(){ ctx = A.ctx(); nouvellePartie(); },
     update, draw, down, move, up, etat: () => G, MANCHES
