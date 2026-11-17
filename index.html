@@ -7144,6 +7144,406 @@ pseudoShow(scene === 'name');
 })();
 
 </script>
+<script>
+'use strict';
+// =====================================================================
+//  ÉPREUVE 26 — Les glaces de Tonton Roupillon   (EN TEST : bientot)
+//  Mémoire. Tonton Roupillon commande ses boules une par une (« Écoute ! »),
+//  puis il s'endort. « À toi ! » : touche les bacs dans le MÊME ORDRE,
+//  chaque boule se pose dans son bol.
+//  3 manches : 5, 9 puis 13 boules. Ordre tiré au hasard à chaque manche
+//  (jamais deux fois le même parfum à la suite).
+//  Premier mauvais parfum = il se réveille, la partie s'arrête.
+//  Score = boules justes (max 27).
+//  14 parfums aux couleurs bien différentes (sa demande, 17 nov.).
+//  Textes à valider (17 nov.) : titre, consigne, « Écoute ! », « À toi ! »,
+//  « Manche 1/3 »…, noms des parfums, unité « boules ».
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', green: '#7ad81e', pink: '#ff4fa3' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const { ln, ell } = Bourdi.chats;
+  const P = () => Bourdi.persos;
+
+  // nom, couleur, motif (points de vanille, flocons, pépites, miettes)
+  const PARFUMS = [
+    { nom: 'Vanille', c: '#fff0bf', m: 'vanille' },
+    { nom: 'Chocolat', c: '#6b3a1e' },
+    { nom: 'Café', c: '#c08a5a' },
+    { nom: 'Pistache', c: '#8fd14f' },
+    { nom: 'Poire', c: '#ffe23a' },
+    { nom: 'Myrtille', c: '#6a4bc4' },
+    { nom: 'Fraise', c: '#ff9ec7' },
+    { nom: 'Framboise', c: '#e8203a' },
+    { nom: 'Mangue', c: '#ff9a1f' },
+    { nom: 'Menthe', c: '#8ff0d8' },
+    { nom: 'Schtroumpf', c: '#3a8cff' },
+    { nom: 'Noix de coco', c: '#ffffff', m: 'coco' },
+    { nom: 'Stracciatella', c: '#fbf7ee', m: 'pepites' },
+    { nom: 'Cheesecake', c: '#f3d79a', m: 'miettes' }
+  ];
+  const MANCHES = [
+    { nom: 'Manche 1/3', n: 5, vit: 1.1 },
+    { nom: 'Manche 2/3', n: 9, vit: 1.0 },
+    { nom: 'Manche 3/3', n: 13, vit: .95 }
+  ];
+  // les bacs : 5 colonnes × 3 lignes
+  const BX0 = 12, BY0 = 486, BW = 63, BH = 66, BG = 4, BGY = 8;
+  const bac = i => ({ x: BX0 + (i % 5) * (BW + BG) + (Math.floor(i / 5) === 2 ? (BW + BG) / 2 : 0), y: BY0 + Math.floor(i / 5) * (BH + BGY) });
+  const BOL = { x: 262, y: 432 };
+
+  let G = null;
+  function roupillon(){ const p = P().makePerson('empty'); p.shirt = '#7a8a9a'; p.style = 'chauve'; p.skin = '#ffd9b8'; p.hair = '#bbb'; p.roup = true; return p; }
+  function nouvellePartie(){
+    G = { t: 0, m: 0, score: 0, phase: 'annonce', pt: 0, liste: [], i: 0, bol: [], vole: [], tombe: null, finT: 0, p: roupillon(), appuye: -1, appT: 0 };
+    debutManche();
+  }
+  const M = () => MANCHES[G.m];
+  function debutManche(){
+    const l = [];
+    for (let k = 0; k < M().n; k++){ let f; do { f = Math.floor(Math.random() * PARFUMS.length); } while (l.length && f === l[l.length - 1]); l.push(f); }
+    Object.assign(G, { liste: l, i: 0, bol: [], vole: [], tombe: null, phase: 'annonce', pt: 0 });
+  }
+
+  function update(dt){
+    if (!G) return;
+    dt = Math.max(0, Math.min(dt, .05));
+    G.t += dt; G.pt += dt; G.appT += dt;
+    const m = M();
+    if (G.phase === 'annonce' && G.pt > 1.3){ G.phase = 'ecoute'; G.pt = 0; G.i = -1; }
+    if (G.phase === 'ecoute'){
+      const k = Math.floor((G.pt - .9) / m.vit);           // 0,9 s pour lire « Écoute ! »
+      if (k > G.i && k < m.n){ G.i = k; const f = G.liste[k]; A.tone(0, 392 + f * 22, .14, .09, 'triangle'); A.tone(.05, 784 + f * 44, .08, .03, 'sine'); }
+      if (G.pt > .9 + m.n * m.vit + .2){ G.phase = 'dort'; G.pt = 0; G.i = 0; A.tone(0, 300, .5, .06, 'sine', 150); }
+    }
+    if (G.phase === 'dort' && G.pt > 1.2){ G.phase = 'atoi'; G.pt = 0; A.sons.go(); }
+    G.vole.forEach(v => { v.t = Math.min(1, v.t + dt / .25); });
+    if (G.tombe){ const t = G.tombe; t.vy += 1100 * dt; t.x += t.vx * dt; t.y += t.vy * dt; }
+    if (G.phase === 'reussi' && G.pt > 1.6){
+      if (G.m >= MANCHES.length - 1){ G.phase = 'fin'; G.pt = 0; }
+      else { G.m++; debutManche(); }
+    }
+    if (G.phase === 'rate' && G.pt > 2.2 && !G.finT){ G.finT = 1; A.fin({ score: G.score }); }
+    if (G.phase === 'fin' && G.pt > .5 && !G.finT){ G.finT = 1; A.fin({ score: G.score }); }
+  }
+
+  function down(p){
+    if (!G || G.phase !== 'atoi') return;
+    let f = -1;
+    PARFUMS.forEach((_, i) => { const b = bac(i); if (p.x >= b.x && p.x <= b.x + BW && p.y >= b.y && p.y <= b.y + BH) f = i; });
+    if (f < 0) return;
+    G.appuye = f; G.appT = 0;
+    const b = bac(f), dep = { x: b.x + BW / 2, y: b.y + 20 };
+    if (f === G.liste[G.i]){
+      G.bol.push(f); G.vole.push({ f, x0: dep.x, y0: dep.y, k: G.bol.length - 1, t: 0 });
+      G.i++; G.score++;
+      A.tone(0, 300 + G.i * 40, .1, .12, 'sine', 160); A.bruit(0, .05, .08, 'lowpass', 900, 1);
+      if (G.i >= M().n){
+        G.phase = 'reussi'; G.pt = 0; A.sons.bien();
+        A.particules(BOL.x, BOL.y - 40, 26, { speed: 260 });
+      }
+    } else {
+      G.tombe = { f, x: dep.x, y: dep.y, vx: (BOL.x - dep.x) * 1.2, vy: -520 };
+      G.phase = 'rate'; G.pt = 0; G.bon = G.liste[G.i];
+      A.sons.erreur(); A.secousse(6, .25);
+    }
+  }
+
+  // ---------- dessin ----------
+  function boule(x, y, r, f){
+    const pf = PARFUMS[f];
+    A.circle(x, y, r, pf.c, Math.max(2.5, r * .14));
+    ctx.save(); ctx.beginPath(); ctx.arc(x, y, r - 1, 0, Math.PI * 2); ctx.clip();
+    const pts = [[-.4, .1], [.3, -.3], [.1, .45], [-.1, -.5], [.5, .25], [-.5, -.25], [.2, .05]];
+    if (pf.m === 'vanille') pts.forEach(([a, b]) => A.circle(x + a * r, y + b * r, Math.max(1, r * .06), '#3a2a20', 0));
+    if (pf.m === 'pepites') pts.forEach(([a, b], i) => A.blob(x + a * r - r * .08, y + b * r - r * .05, r * .2, r * .12, 1, '#3a1e10', 0));
+    if (pf.m === 'coco') pts.forEach(([a, b]) => ln([[x + a * r - r * .1, y + b * r], [x + a * r + r * .1, y + b * r - r * .05]], Math.max(1.5, r * .07), '#d9cbb0'));
+    if (pf.m === 'miettes') pts.forEach(([a, b]) => A.circle(x + a * r, y + b * r, Math.max(1.2, r * .09), '#c9772a', 0));
+    ctx.restore();
+    ell(x - r * .35, y - r * .38, r * .26, r * .17, 'rgba(255,255,255,.6)', 0);
+  }
+  // position de la k-ième boule dans le bol (pyramide : 5, 4, 3, 1)
+  function placeBol(k){
+    const rows = [5, 4, 3, 1]; let r = 0, n = k;
+    while (r < rows.length - 1 && n >= rows[r]){ n -= rows[r]; r++; }
+    const cnt = rows[r];
+    return { x: BOL.x + (n - (cnt - 1) / 2) * 17, y: BOL.y - 12 - r * 15 };
+  }
+  function bol(){
+    G.vole.forEach(v => { if (v.t < 1) return; const q = placeBol(v.k); boule(q.x, q.y, 10, v.f); });
+    ctx.beginPath(); ctx.moveTo(BOL.x - 52, BOL.y - 6); ctx.lineTo(BOL.x + 52, BOL.y - 6); ctx.quadraticCurveTo(BOL.x + 46, BOL.y + 34, BOL.x, BOL.y + 36); ctx.quadraticCurveTo(BOL.x - 46, BOL.y + 34, BOL.x - 52, BOL.y - 6); ctx.closePath();
+    ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.stroke();
+    ln([[BOL.x - 40, BOL.y + 6], [BOL.x + 40, BOL.y + 6]], 4, '#ff9ec7');
+    G.vole.forEach(v => { if (v.t >= 1) return; const q = placeBol(v.k), e = v.t, x = v.x0 + (q.x - v.x0) * e, y = v.y0 + (q.y - v.y0) * e - Math.sin(e * Math.PI) * 60; boule(x, y, 10 + 4 * (1 - e), v.f); });
+  }
+  function bacs(){
+    // le comptoir
+    A.blob(-20, 470, 400, 300, 0, '#7ad8d0', 5); A.blob(-20, 470, 400, 10, 0, '#5cbfb3', 3);
+    PARFUMS.forEach((pf, i) => {
+      const b = bac(i), on = G && G.appuye === i && G.appT < .15, dy = on ? 3 : 0;
+      A.blob(b.x, b.y + 4, BW, BH, 10, COL.ink, 0);
+      A.blob(b.x, b.y + dy, BW, BH, 10, '#e9f3f7', 3);
+      ctx.save(); ctx.beginPath(); ctx.rect(b.x + 5, b.y + 5 + dy, BW - 10, 30); ctx.clip();
+      boule(b.x + BW / 2 - 12, b.y + 26 + dy, 15, i); boule(b.x + BW / 2 + 12, b.y + 28 + dy, 15, i); boule(b.x + BW / 2, b.y + 18 + dy, 14, i);
+      ctx.restore();
+      A.txt(pf.nom, b.x + BW / 2, b.y + 50 + dy, 11, COL.ink, { lw: 0, max: BW - 6 });
+    });
+  }
+  function draw(cx){
+    ctx = cx || A.ctx();
+    if (!G) return;
+    const m = M();
+    ctx.fillStyle = '#ffd8ec'; ctx.fillRect(-200, -300, 760, 1100);
+    for (let x = -200; x < 560; x += 44){ ctx.fillStyle = '#ffc6e2'; ctx.fillRect(x, -300, 22, 820); }
+    // Tonton Roupillon
+    const dort = G.phase === 'dort' || G.phase === 'atoi' || G.phase === 'reussi' && G.pt < .5;
+    const expr = G.phase === 'rate' ? 'shock' : dort ? 'sleep' : 'smile';
+    P().drawPerson(G.p, 96, 468, .95, G.t, { expr, rot: dort ? Math.sin(G.t * 1.5) * .03 : 0 });
+    if (dort) for (let k = 0; k < 3; k++){ const u = (G.t * .6 + k / 3) % 1; ctx.save(); ctx.globalAlpha = 1 - u; A.circle(140 + u * 40, 250 - u * 70, 4 + u * 7, '#fff', 2.5); ctx.restore(); }
+    bol();
+    bacs();
+    // la commande : une grosse boule dans une bulle
+    if (G.phase === 'ecoute' && G.i >= 0 && G.pt - .9 - G.i * m.vit < m.vit * .82){
+      const f = G.liste[G.i], e = Math.min(1, (G.pt - .9 - G.i * m.vit) * 8);
+      A.blob(190, 150, 154, 170, 24, '#fff', 4);
+      ctx.beginPath(); ctx.moveTo(196, 270); ctx.lineTo(160, 300); ctx.lineTo(214, 290); ctx.closePath(); ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.stroke(); ctx.fillStyle = '#fff'; ctx.fillRect(194, 266, 24, 10);
+      ctx.save(); ctx.translate(267, 214); ctx.scale(.6 + e * .4, .6 + e * .4); boule(0, 0, 40, f); ctx.restore();
+      A.txt(PARFUMS[f].nom, 267, 290, 22, COL.ink, { lw: 0, max: 140 });
+      A.txt((G.i + 1) + '/' + m.n, 267, 166, 14, '#9a8fb0', { lw: 0 });
+    }
+    // la bonne boule quand on s'est trompé
+    if (G.phase === 'rate' && G.pt > .5){
+      A.blob(190, 150, 154, 150, 24, '#fff', 4);
+      boule(267, 210, 34, G.bon); A.txt(PARFUMS[G.bon].nom, 267, 272, 20, COL.ink, { lw: 0, max: 140 });
+    }
+    if (G.tombe) boule(G.tombe.x, G.tombe.y, 12, G.tombe.f);
+    // en haut
+    A.txt(m.nom, 100, 34, 22, COL.white, { lw: 6 });
+    A.txt(G.score + ' boules', 214, 36, 19, COL.yellow, { lw: 5, max: 120 });
+    if (G.phase === 'atoi') A.txt((G.i) + '/' + m.n, BOL.x, BOL.y - 92, 20, COL.white, { lw: 5 });
+    if (G.phase === 'annonce') pop(m.nom, G.pt, COL.yellow, 40);
+    if (G.phase === 'ecoute' && G.pt < .9) pop('Écoute !', G.pt, COL.white, 46);
+    if (G.phase === 'atoi' && G.pt < 1.2) pop('À toi !', G.pt, COL.green, 50);
+  }
+  function pop(s, t, c, size){ const k = Math.min(1, t * 6), a = t > .9 ? Math.max(0, 1 - (t - .9) * 3) : 1;
+    ctx.save(); ctx.globalAlpha = a; ctx.translate(180, 200); ctx.scale(.6 + k * .4, .6 + k * .4); A.txt(s, 0, 0, size, c, { lw: 9, max: 330 }); ctx.restore(); }
+
+  function vignette(c, x, y, w, h, t){
+    const old = ctx; ctx = c;
+    c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
+    c.fillStyle = '#ffd8ec'; c.fillRect(x, y, w, h);
+    const k = h / 150; c.translate(x + w / 2, y + h); c.scale(k, k);
+    A.blob(-200, -30, 400, 40, 0, '#7ad8d0', 4);
+    const n = 1 + Math.floor(t * 1.5) % 6, cols = [0, 3, 6, 1, 10, 13];
+    for (let i = 0; i < n; i++) boule(-30 + (i % 3) * 30, -48 - Math.floor(i / 3) * 26, 15, cols[i]);
+    ctx.beginPath(); ctx.moveTo(-58, -40); ctx.lineTo(58, -40); ctx.quadraticCurveTo(52, 0, 0, 2); ctx.quadraticCurveTo(-52, 0, -58, -40); ctx.closePath(); ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.stroke();
+    A.blob(40, -146, 70, 56, 14, '#fff', 3); boule(75, -118, 20, cols[(n) % 6]);
+    c.restore(); ctx = old;
+  }
+
+  Bourdi.ajouter({
+    id: 'roupillon', titre: 'Les glaces de Tonton Roupillon', court: 'Les glaces de Tonton Roupillon', bientot: true,
+    consigne: "Retiens les boules qu'il commande, puis sers-les dans le même ordre !",
+    seuils: { S: 27, A: 22, B: 16, C: 12, D: 5 },
+    format: n => n + (n > 1 ? ' boules' : ' boule'),
+    musique: 'jeu', vignette,
+    start(){ ctx = A.ctx(); nouvellePartie(); },
+    update, draw, down, etat: () => G, PARFUMS
+  });
+})();
+
+</script>
+<script>
+'use strict';
+// =====================================================================
+//  ÉPREUVE 27 — Tu te souviens de moi ?   (EN TEST : bientot)
+//  Mémoire + vitesse. Des gens viennent à la maison un par un (on les
+//  regarde bien). Puis ils reviennent un par un, mélangés avec des
+//  inconnus (certains leur ressemblent : une seule chose change).
+//  Chacun dit « Tu te souviens de moi ? » :
+//   gauche = « Jamais venu », droite = « Je me souviens ».
+//  Tac, il part, le suivant arrive tout de suite.
+//  3 manches : 5, 8 puis 12 gens dans la maison (autant d'inconnus).
+//  Erreur = +3 s (validé le 17 nov.), on continue.
+//  Score = temps total des défilés (le plus petit gagne).
+//  Textes : « Tu te souviens de moi ? », « Jamais venu », « Je me souviens »
+//  (validés le 17 nov.) ; « Regarde bien ! », « +3 s », consigne : à valider.
+// =====================================================================
+(() => {
+  const COL = { ink: '#1d1530', white: '#fff', red: '#ff3b3b', orange: '#ff8a1f', yellow: '#ffd21f', green: '#4caf2a', sky: '#5ec8ff' };
+  const A = Bourdi.api; let ctx = A.ctx();
+  const { ln, ell } = Bourdi.chats;
+  const P = () => Bourdi.persos;
+
+  const MANCHES = [
+    { nom: 'Manche 1/3', n: 5, vu: 1.5 },
+    { nom: 'Manche 2/3', n: 8, vu: 1.3 },
+    { nom: 'Manche 3/3', n: 12, vu: 1.15 }
+  ];
+  const PEN = 3000;
+  const SKINS = ['#ffd9b8', '#f2c294', '#c98a5a', '#8d5a36', '#ffe0c7'];
+  const HAIRS = ['#3a2a20', '#f0c040', '#b04a20', '#222', '#d9d9e6'];
+  const SHIRTS = ['#2f6bff', '#7ad81e', '#8a3ffc', '#ff8a1f', '#5ec8ff', '#ff7ab8', '#ff3b3b', '#ffd21f'];
+  const STYLES = ['court', 'chignon', 'boucles', 'chauve', 'frange'];
+  const PANTS = ['#3a4a8a', '#5b3a29', '#2f2a3d', '#7a7a8a'];
+  const pick = a => a[Math.floor(Math.random() * a.length)];
+  const DOOR = 300, FLOOR = 520, CX = 180;
+
+  let G = null;
+  const sig = p => [p.skin, p.hair, p.shirt, p.style].join('|');
+  function quelquun(){ return { kind: 'empty', skin: pick(SKINS), hair: pick(HAIRS), shirt: pick(SHIRTS), pants: pick(PANTS), style: pick(STYLES) }; }
+  function sosie(p){
+    const q = Object.assign({}, p), k = pick(p.style === 'chauve' ? ['shirt', 'style', 'skin'] : ['hair', 'shirt', 'style', 'skin']);
+    const src = { hair: HAIRS, shirt: SHIRTS, style: STYLES, skin: SKINS }[k];
+    do { q[k] = pick(src); } while (q[k] === p[k]);
+    return q;
+  }
+  function nouvellePartie(){
+    G = { t: 0, m: 0, ms: 0, pen: 0, phase: 'annonce', pt: 0, gens: [], file: [], i: 0, sort: null, err: 0, finT: 0, flash: 0, ok: 0 };
+    debutManche();
+  }
+  const M = () => MANCHES[G.m];
+  function debutManche(){
+    const n = M().n, vus = new Set(), gens = [];
+    while (gens.length < n){ const p = quelquun(); if (!vus.has(sig(p))){ vus.add(sig(p)); gens.push(p); } }
+    const inconnus = [];
+    for (let essai = 0; inconnus.length < n && essai < 500; essai++){
+      const p = inconnus.length % 2 && essai < 400 ? quelquun() : (essai < 400 ? sosie(pick(gens)) : quelquun());
+      if (!vus.has(sig(p))){ vus.add(sig(p)); inconnus.push(p); }
+    }
+    const file = gens.map(p => ({ p, venu: true })).concat(inconnus.map(p => ({ p, venu: false })));
+    for (let i = file.length - 1; i > 0; i--){ const j = Math.floor(Math.random() * (i + 1)); [file[i], file[j]] = [file[j], file[i]]; }
+    Object.assign(G, { gens, file, i: 0, sort: null, phase: 'annonce', pt: 0, arr: 0 });
+  }
+
+  function update(dt){
+    if (!G) return;
+    dt = Math.max(0, Math.min(dt, .05));
+    G.t += dt; G.pt += dt; G.flash = Math.max(0, G.flash - dt); G.ok = Math.max(0, G.ok - dt);
+    const m = M();
+    if (G.phase === 'annonce' && G.pt > 1.3){ G.phase = 'regarde'; G.pt = 0; }
+    if (G.phase === 'regarde'){
+      const k = Math.floor((G.pt - .9) / m.vu);
+      if (k >= 0 && k < m.n && k !== G.vk){ G.vk = k; A.tone(0, 520, .06, .05, 'triangle', 700); }
+      if (G.pt > .9 + m.n * m.vu + .3){ G.phase = 'pret'; G.pt = 0; G.vk = -1; }
+    }
+    if (G.phase === 'pret' && G.pt > 1.1){ G.phase = 'defile'; G.pt = 0; G.arr = 0; A.sons.go(); }
+    if (G.phase === 'defile'){ G.ms += dt * 1000; G.arr += dt; }
+    if (G.sort){ G.sort.t += dt; if (G.sort.t > .5) G.sort = null; }
+    if (G.phase === 'fini' && G.pt > 1.2){
+      if (G.m >= MANCHES.length - 1){ G.phase = 'fin'; G.pt = 0; }
+      else { G.m++; debutManche(); }
+    }
+    if (G.phase === 'fin' && G.pt > .4 && !G.finT){ G.finT = 1; A.fin({ score: Math.round(G.ms + G.pen) }); }
+  }
+
+  function repond(dit){
+    const c = G.file[G.i], bon = c.venu === dit;
+    G.sort = { p: c.p, dir: dit ? 1 : -1, t: 0 };
+    if (bon){ G.ok = .25; A.tone(0, dit ? 880 : 660, .07, .07, 'square', dit ? 1175 : 880); }
+    else { G.pen += PEN; G.err++; G.flash = .35; A.sons.erreur(); A.secousse(5, .2); A.texte('+3 s', 180, 200, { size: 42, color: COL.red, dur: .8 }); }
+    G.i++; G.arr = 0;
+    if (G.i >= G.file.length){ G.phase = 'fini'; G.pt = 0; A.sons.bien(); }
+  }
+  function down(p){
+    if (!G || G.phase !== 'defile' || G.arr < .08) return;
+    if (p.y < 300) return;
+    repond(p.x >= 180);
+  }
+
+  // ---------- dessin ----------
+  function decor(){
+    const g = ctx.createLinearGradient(0, 0, 0, FLOOR); g.addColorStop(0, '#6cc4ff'); g.addColorStop(1, '#cdefff');
+    ctx.fillStyle = g; ctx.fillRect(-40, -40, 440, FLOOR + 60);
+    ell(70, 250, 36, 14, 'rgba(255,255,255,.85)', 0); ell(98, 242, 24, 14, 'rgba(255,255,255,.85)', 0);
+    A.blob(-40, FLOOR - 70, 230, 70, 0, '#7cc45c', 0);
+    // la maison (façade) à droite
+    A.blob(214, 120, 200, FLOOR - 120, 0, '#f3d9a6', 4);
+    ctx.beginPath(); ctx.moveTo(196, 126); ctx.lineTo(300, 50); ctx.lineTo(420, 126); ctx.closePath(); ctx.fillStyle = '#c8453a'; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.stroke();
+    A.blob(244, 160, 40, 40, 4, '#9fdcff', 3); ln([[264, 160], [264, 200]], 2.5, COL.ink);
+    // la porte (ouverte pendant qu'on regarde)
+    const ouverte = G && G.phase === 'regarde';
+    A.blob(DOOR - 34, FLOOR - 150, 68, 150, 6, ouverte ? '#3a2a20' : '#a05a2c', 4);
+    if (!ouverte) A.circle(DOOR + 22, FLOOR - 76, 5, '#e8c25a', 2.5);
+    // le trottoir
+    ctx.fillStyle = '#c9c3d6'; ctx.fillRect(-40, FLOOR, 440, 30); ln([[-40, FLOOR], [400, FLOOR]], 4, COL.ink);
+    ctx.fillStyle = '#6fcf4a'; ctx.fillRect(-40, FLOOR + 30, 440, 300);
+  }
+  function perso(p, x, s, o = {}){ P().drawPerson(p, x, FLOOR + 6, s, G ? G.t : 0, o); }
+  function draw(cx){
+    ctx = cx || A.ctx();
+    if (!G) return;
+    const m = M();
+    decor();
+    // on regarde : chacun arrive de la gauche, s'arrête au milieu, puis rentre dans la maison
+    if (G.phase === 'regarde' && G.vk >= 0 && G.vk < m.n){
+      const u = (G.pt - .9 - G.vk * m.vu) / m.vu, p = G.gens[G.vk];
+      let x, s = 1.3;
+      if (u < .2) x = -60 + (CX + 60) * (u / .2);
+      else if (u < .75) x = CX;
+      else { x = CX + (DOOR - CX) * ((u - .75) / .25); s = 1.3 - (u - .75) * 2; }
+      perso(p, x, s, { walk: u < .2 || u >= .75 });
+    }
+    // le défilé
+    if (G.phase === 'defile' || G.phase === 'fini'){
+      if (G.sort){ const e = Math.min(1, G.sort.t / .35), x = CX + G.sort.dir * e * 260; perso(G.sort.p, x, 1.3, { walk: true }); }
+      if (G.phase === 'defile'){
+        const c = G.file[G.i], e = Math.min(1, G.arr / .12);
+        ctx.save(); ctx.globalAlpha = e; perso(c.p, CX, 1.3 * (.85 + e * .15)); ctx.restore();
+        // la bulle
+        A.blob(30, 100, 300, 58, 20, '#fff', 4);
+        ctx.beginPath(); ctx.moveTo(160, 156); ctx.lineTo(172, 182); ctx.lineTo(190, 156); ctx.closePath(); ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = COL.ink; ctx.stroke(); ctx.fillRect(158, 150, 34, 8);
+        A.txt('Tu te souviens de moi ?', 180, 129, 22, COL.ink, { lw: 0, max: 280 });
+      }
+    }
+    if (G.flash) { ctx.fillStyle = `rgba(255,59,59,${G.flash})`; ctx.fillRect(-40, -40, 440, 800); }
+    // les deux grands boutons
+    if (G.phase === 'defile' || G.phase === 'pret' || G.phase === 'fini'){
+      const on = G.phase === 'defile';
+      ctx.save(); ctx.globalAlpha = on ? 1 : .5;
+      A.blob(10, 576, 164, 120, 22, COL.ink, 0); A.blob(10, 570, 164, 120, 22, COL.red, 4);
+      fleche(92, 606, -1); A.txt('Jamais venu', 92, 646, 22, COL.white, { lw: 6, max: 150 });
+      A.blob(186, 576, 164, 120, 22, COL.ink, 0); A.blob(186, 570, 164, 120, 22, COL.green, 4);
+      fleche(268, 606, 1); A.txt('Je me souviens', 268, 646, 22, COL.white, { lw: 6, max: 150 });
+      ctx.restore();
+    }
+    // en haut
+    A.txt(m.nom, 90, 34, 22, COL.white, { lw: 6 });
+    A.txt(fmt(G.ms + G.pen), 214, 36, 20, COL.yellow, { lw: 5, max: 140 });
+    if (G.phase === 'defile' || G.phase === 'fini') A.txt(Math.min(G.i + 1, G.file.length) + '/' + G.file.length, 180, 76, 16, COL.white, { lw: 4 });
+    if (G.phase === 'regarde' && G.vk >= 0) A.txt((G.vk + 1) + '/' + m.n, 180, 76, 16, COL.white, { lw: 4 });
+    if (G.phase === 'annonce') pop(m.nom, G.pt, COL.yellow, 40);
+    if (G.phase === 'regarde' && G.pt < .9) pop('Regarde bien !', G.pt, COL.white, 42);
+  }
+  function fleche(x, y, d){ ctx.beginPath(); ctx.moveTo(x + d * 16, y); ctx.lineTo(x - d * 10, y - 14); ctx.lineTo(x - d * 10, y + 14); ctx.closePath(); ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 3.5; ctx.strokeStyle = COL.ink; ctx.lineJoin = 'round'; ctx.stroke(); }
+  function pop(s, t, c, size){ const k = Math.min(1, t * 6), a = t > .9 ? Math.max(0, 1 - (t - .9) * 3) : 1;
+    ctx.save(); ctx.globalAlpha = a; ctx.translate(180, 250); ctx.scale(.6 + k * .4, .6 + k * .4); A.txt(s, 0, 0, size, c, { lw: 9, max: 330 }); ctx.restore(); }
+  const fmt = ms => (Math.max(0, ms) / 1000).toFixed(2).replace('.', ',') + ' s';
+
+  const VP = { kind: 'empty', skin: '#f2c294', hair: '#b04a20', shirt: '#8a3ffc', pants: '#3a4a8a', style: 'boucles' };
+  function vignette(c, x, y, w, h, t){
+    const old = ctx, G0 = G; ctx = c; G = null;
+    c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
+    const k = Math.max(h / 330, w / 330); c.translate(x + w / 2, y + h); c.scale(k, k); c.translate(-200, -FLOOR - 40);
+    decor();
+    P().drawPerson(VP, 150, FLOOR + 6, 1, t, { expr: 'grin' });
+    A.blob(40, 300, 220, 44, 16, '#fff', 4); A.txt('?', 150, 322, 30, COL.ink, { lw: 0 });
+    c.restore(); ctx = old; G = G0;
+  }
+
+  Bourdi.ajouter({
+    id: 'souviens', titre: 'Tu te souviens de moi ?', court: 'Tu te souviens de moi ?', bientot: true,
+    consigne: 'Regarde bien qui vient à la maison ! Ensuite : jamais venu à gauche, je me souviens à droite, le plus vite possible.',
+    plusPetitGagne: true,
+    seuils: { S: 40000, A: 50000, B: 62000, C: 78000, D: 100000 },
+    format: fmt,
+    musique: 'jeu', vignette,
+    start(){ ctx = A.ctx(); nouvellePartie(); },
+    update, draw, down, etat: () => G, MANCHES
+  });
+})();
+
+</script>
 <!-- FIN -->
 <script>Bourdi.demarrer();</script>
 
